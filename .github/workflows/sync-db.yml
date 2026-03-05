@@ -48,7 +48,7 @@ jobs:
       - name: Sanitize and export
         run: |
           mkdir -p .github/fixtures
-          ddev wp db export-clean .github/fixtures/sanitized-db.sql --remove-keys
+          ddev exec CI=true wp db export-clean .github/fixtures/sanitized-db.sql --remove-keys
           gzip -f .github/fixtures/sanitized-db.sql
 
       - name: Encrypt artifact
