@@ -20,8 +20,6 @@ on:
         required: true
       FIGMA_API_KEY:
         required: false
-      GH_TOKEN:
-        required: false
 
 jobs:
   claude:
@@ -48,7 +46,7 @@ jobs:
           workflow: sync-db.yml
           name: sanitized-db
           path: .github/fixtures/
-          github_token: ${{ secrets.GH_TOKEN }}
+          github_token: ${{ github.token }}
 
       - name: Decrypt and import database
         env:

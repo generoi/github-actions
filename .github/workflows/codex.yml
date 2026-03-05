@@ -15,8 +15,6 @@ on:
         required: true
       OPENAI_API_KEY:
         required: true
-      GH_TOKEN:
-        required: false
 
 jobs:
   codex:
@@ -43,7 +41,7 @@ jobs:
           workflow: sync-db.yml
           name: sanitized-db
           path: .github/fixtures/
-          github_token: ${{ secrets.GH_TOKEN }}
+          github_token: ${{ github.token }}
 
       - name: Decrypt and import database
         env:
