@@ -27,6 +27,7 @@ jobs:
   build_deploy:
     name: Build and deploy
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -38,17 +39,22 @@ jobs:
 
       - name: Configure SSH
         if: inputs.ssh_config != ''
+        env:
+          SSH_CONFIG: ${{ inputs.ssh_config }}
         run: |
-          echo "${{ inputs.ssh_config }}" >> ~/.ssh/config
+          echo "$SSH_CONFIG" >> ~/.ssh/config
           chmod 600 ~/.ssh/config
 
       - name: Add known hosts
+        env:
+          SSH_KNOWN_HOSTS: ${{ inputs.ssh_known_hosts }}
+          DEPLOY_ENV: ${{ inputs.environment }}
         run: |
-          if [ -n "${{ inputs.ssh_known_hosts }}" ]; then
-            echo "${{ inputs.ssh_known_hosts }}" >> ~/.ssh/known_hosts
+          if [ -n "$SSH_KNOWN_HOSTS" ]; then
+            echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
           else
-            ssh-keyscan -p $(./vendor/bin/robo config env.@${{ inputs.environment }}.port || echo 22) \
-              $(./vendor/bin/robo config env.@${{ inputs.environment }}.host) >> ~/.ssh/known_hosts
+            ssh-keyscan -p $(./vendor/bin/robo config "env.@${DEPLOY_ENV}.port" || echo 22) \
+              $(./vendor/bin/robo config "env.@${DEPLOY_ENV}.host") >> ~/.ssh/known_hosts
           fi
 
       - name: Setup project
@@ -64,4 +70,7 @@ jobs:
         run: composer test --no-interaction
 
       - name: Deploy
-        run: ./vendor/bin/dep deploy ${{ inputs.environment }} ${{ inputs.log_level }}
+        env:
+          DEPLOY_ENV: ${{ inputs.environment }}
+          LOG_LEVEL: ${{ inputs.log_level }}
+        run: ./vendor/bin/dep deploy "$DEPLOY_ENV" "$LOG_LEVEL"

@@ -19,8 +19,10 @@ runs:
 
     - name: Authenticate with Fontawesome NPM repository
       shell: bash
+      env:
+        FONTAWESOME_TOKEN: ${{ inputs.npm_fontawesome_auth_token }}
       run: |
-        npm config set "//npm.fontawesome.com/:_authToken" ${{ inputs.npm_fontawesome_auth_token }}
+        npm config set "//npm.fontawesome.com/:_authToken" "$FONTAWESOME_TOKEN"
 
     - name: Read PHP version from composer.json to env
       shell: bash

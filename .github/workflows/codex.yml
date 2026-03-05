@@ -1,0 +1,71 @@
+name: Codex Agent
+
+on:
+  workflow_call:
+    inputs:
+      model:
+        type: string
+        default: o3
+    secrets:
+      NPM_FONTAWESOME_AUTH_TOKEN:
+        required: true
+      PACKAGIST_GITHUB_TOKEN:
+        required: true
+      DB_ARTIFACT_KEY:
+        required: true
+      OPENAI_API_KEY:
+        required: true
+
+jobs:
+  codex:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup project
+        uses: generoi/github-actions/setup@v1
+        with:
+          npm_fontawesome_auth_token: ${{ secrets.NPM_FONTAWESOME_AUTH_TOKEN }}
+          packagist_github_token: ${{ secrets.PACKAGIST_GITHUB_TOKEN }}
+
+      - name: Install and build
+        run: composer install:development
+
+      - name: Setup DDEV
+        uses: generoi/github-actions/setup-ddev@v1
+
+      - name: Download database artifact
+        uses: dawidd6/action-download-artifact@2536c51d3d126276eb39f74d6bc9c72ac6ef30d3 # v16
+        with:
+          workflow: sync-db.yml
+          name: sanitized-db
+          path: .github/fixtures/
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Decrypt and import database
+        env:
+          DB_ARTIFACT_KEY: ${{ secrets.DB_ARTIFACT_KEY }}
+        run: |
+          openssl enc -aes-256-cbc -pbkdf2 -d \
+            -in .github/fixtures/sanitized-db.sql.gz.enc \
+            -out .github/fixtures/sanitized-db.sql.gz \
+            -pass env:DB_ARTIFACT_KEY
+          ddev import-db --file=.github/fixtures/sanitized-db.sql.gz
+          rm -f .github/fixtures/sanitized-db.sql.gz .github/fixtures/sanitized-db.sql.gz.enc
+
+      - name: Optimize acorn
+        run: ddev wp acorn optimize
+
+      - name: Run Codex
+        uses: openai/codex-action@f5c0ca71642badb34c1e66321d8d85685a0fa3dc # v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          sandbox: danger-full-access
+          model: ${{ inputs.model }}
+          prompt: |
+            You are working on the ${{ github.repository }} repository.
+            Follow the instructions in AGENTS.md and .claude/CLAUDE.md for project conventions.
+
+            Task from GitHub:
+            ${{ github.event.issue.body || github.event.comment.body }}

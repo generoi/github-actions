@@ -32,7 +32,6 @@ runs:
         sed -i 's/.*WP_HOME=.*/WP_HOME=http:\/\/localhost:8080/g' .env
         sed -i 's/.*DOMAIN_CURRENT_SITE=.*/DOMAIN_CURRENT_SITE=localhost:8080/g' .env
         sed -i 's/.*DB_HOST=.*/DB_HOST=localhost/g' .env
-        cat .env
 
     - name: Install WordPress
       if: ${{ inputs.multisite != 'true' }}
@@ -59,4 +58,6 @@ runs:
     - name: Activate plugins
       if: ${{ inputs.activate_plugins != '' }}
       shell: bash
-      run: ./vendor/bin/wp plugin activate ${{ inputs.activate_plugins }}
+      env:
+        PLUGINS: ${{ inputs.activate_plugins }}
+      run: ./vendor/bin/wp plugin activate $PLUGINS

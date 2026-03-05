@@ -57,7 +57,9 @@ jobs:
 
       - name: Verify frontpage content
         if: inputs.smoke_grep != ''
-        run: grep '${{ inputs.smoke_grep }}' /tmp/frontpage.html
+        env:
+          SMOKE_GREP: ${{ inputs.smoke_grep }}
+        run: grep "$SMOKE_GREP" /tmp/frontpage.html
 
       - name: Enable debugging
         if: failure() || inputs.debug
