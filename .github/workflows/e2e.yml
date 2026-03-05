@@ -1,0 +1,33 @@
+name: E2E tests
+
+on:
+  workflow_call:
+    inputs:
+      url:
+        required: true
+        type: string
+
+jobs:
+  e2e:
+    name: Run E2E tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set URL as environment variable so playwright uses it
+        run: echo "URL=${{ inputs.url }}" >> $GITHUB_ENV
+
+      - name: Install dependencies
+        run: npm run e2e:install
+
+      - name: Run E2E tests
+        run: npm run e2e:test
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-test-results
+          path: test-results/
+          if-no-files-found: ignore

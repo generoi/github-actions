@@ -1,0 +1,67 @@
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      log_level:
+        required: true
+        type: string
+      ssh_config:
+        type: string
+        default: ''
+      ssh_known_hosts:
+        type: string
+        default: ''
+    secrets:
+      DEPLOY_SSH_PRIVATE_KEY:
+        required: true
+      NPM_FONTAWESOME_AUTH_TOKEN:
+        required: true
+      PACKAGIST_GITHUB_TOKEN:
+        required: true
+
+jobs:
+  build_deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Start SSH agent
+        uses: generoi/github-actions/ssh-agent@v1
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+
+      - name: Configure SSH
+        if: inputs.ssh_config != ''
+        run: |
+          echo "${{ inputs.ssh_config }}" >> ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+      - name: Add known hosts
+        run: |
+          if [ -n "${{ inputs.ssh_known_hosts }}" ]; then
+            echo "${{ inputs.ssh_known_hosts }}" >> ~/.ssh/known_hosts
+          else
+            ssh-keyscan -p $(./vendor/bin/robo config env.@${{ inputs.environment }}.port || echo 22) \
+              $(./vendor/bin/robo config env.@${{ inputs.environment }}.host) >> ~/.ssh/known_hosts
+          fi
+
+      - name: Setup project
+        uses: generoi/github-actions/setup@v1
+        with:
+          npm_fontawesome_auth_token: ${{ secrets.NPM_FONTAWESOME_AUTH_TOKEN }}
+          packagist_github_token: ${{ secrets.PACKAGIST_GITHUB_TOKEN }}
+
+      - name: Install development packages to run tests
+        run: composer install:development
+
+      - name: Run tests
+        run: composer test --no-interaction
+
+      - name: Deploy
+        run: ./vendor/bin/dep deploy ${{ inputs.environment }} ${{ inputs.log_level }}

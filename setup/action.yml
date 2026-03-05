@@ -1,0 +1,49 @@
+name: 'Setup PHP + Node'
+description: 'Setup PHP and Node.js with caching, Fontawesome and Packagist auth'
+
+inputs:
+  npm_fontawesome_auth_token:
+    required: true
+  packagist_github_token:
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      with:
+        node-version-file: .nvmrc
+        cache: 'npm'
+        cache-dependency-path: '**/package-lock.json'
+
+    - name: Authenticate with Fontawesome NPM repository
+      shell: bash
+      run: |
+        npm config set "//npm.fontawesome.com/:_authToken" ${{ inputs.npm_fontawesome_auth_token }}
+
+    - name: Read PHP version from composer.json to env
+      shell: bash
+      run: |
+        echo "PHP_VERSION=$(cat ./composer.json | jq -r '.config.platform.php')" >> "$GITHUB_ENV"
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@44454db4f0199b8b9685a5d763dc37cbf79108e1 # v2
+      with:
+        php-version: ${{ env.PHP_VERSION }}
+      env:
+        COMPOSER_TOKEN: ${{ inputs.packagist_github_token }}
+
+    - name: Get Composer Cache Directory
+      id: composer-cache
+      shell: bash
+      run: |
+        echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+    - name: Composer Cache
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ${{ steps.composer-cache.outputs.dir }}
+        key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-composer-

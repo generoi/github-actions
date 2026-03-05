@@ -1,0 +1,81 @@
+name: Test
+
+on:
+  workflow_call:
+    inputs:
+      multisite:
+        type: boolean
+        default: false
+      smoke_grep:
+        type: string
+        default: ''
+      debug:
+        type: boolean
+        default: false
+      activate_plugins:
+        type: string
+        default: ''
+    secrets:
+      NPM_FONTAWESOME_AUTH_TOKEN:
+        required: true
+      PACKAGIST_GITHUB_TOKEN:
+        required: true
+
+jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup project
+        uses: generoi/github-actions/setup@v1
+        with:
+          npm_fontawesome_auth_token: ${{ secrets.NPM_FONTAWESOME_AUTH_TOKEN }}
+          packagist_github_token: ${{ secrets.PACKAGIST_GITHUB_TOKEN }}
+
+      - name: Install development packages
+        run: composer install:development
+
+      - name: Run CI tests
+        run: composer ci --no-interaction
+
+      - name: Install WordPress
+        uses: generoi/github-actions/install-wordpress@v1
+        with:
+          multisite: ${{ inputs.multisite }}
+          activate_plugins: ${{ inputs.activate_plugins }}
+
+      - name: Optimize acorn
+        run: ./vendor/bin/wp acorn optimize
+
+      - name: Load frontpage
+        run: |
+          RESPONSE=$(curl -sf http://localhost:8080/)
+          echo "$RESPONSE" > /tmp/frontpage.html
+
+      - name: Verify frontpage content
+        if: inputs.smoke_grep != ''
+        run: grep '${{ inputs.smoke_grep }}' /tmp/frontpage.html
+
+      - name: Enable debugging
+        if: failure() || inputs.debug
+        run: sed -i 's/.*WP_ENVIRONMENT_TYPE=.*/WP_ENVIRONMENT_TYPE=development/g' .env
+
+      - name: Display debug response
+        if: failure() || inputs.debug
+        run: curl -v http://localhost:8080/
+
+      - name: Check if phpunit is available
+        id: has-phpunit
+        run: |
+          if composer show phpunit/phpunit 2>/dev/null; then
+            echo "available=true" >> $GITHUB_OUTPUT
+          else
+            echo "available=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run unit tests
+        if: steps.has-phpunit.outputs.available == 'true'
+        run: composer phpunit
