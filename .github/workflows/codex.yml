@@ -16,7 +16,7 @@ on:
       OPENAI_API_KEY:
         required: true
       GH_TOKEN:
-        required: true
+        required: false
 
 jobs:
   codex:

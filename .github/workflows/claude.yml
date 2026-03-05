@@ -21,7 +21,7 @@ on:
       FIGMA_API_KEY:
         required: false
       GH_TOKEN:
-        required: true
+        required: false
 
 jobs:
   claude:
