@@ -83,3 +83,11 @@ jobs:
             --allowedTools "*"
         env:
           FIGMA_API_KEY: ${{ secrets.FIGMA_API_KEY }}
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: claude-artifacts
+          path: artifacts/
+          if-no-files-found: ignore
