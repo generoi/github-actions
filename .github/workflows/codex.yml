@@ -63,6 +63,11 @@ jobs:
       - name: Create artifacts directory
         run: mkdir -p artifacts
 
+      - name: Clone agency rules
+        run: |
+          git clone https://github.com/generoi/ai-agency.git ~/.claude/agency
+          ln -sf ~/.claude/agency/rules ~/.claude/rules
+
       - name: Run Codex
         uses: openai/codex-action@f5c0ca71642badb34c1e66321d8d85685a0fa3dc # v1
         with:
@@ -71,7 +76,7 @@ jobs:
           model: ${{ inputs.model }}
           prompt: |
             You are working on the ${{ github.repository }} repository.
-            Follow the instructions in .claude/CLAUDE.md for project conventions.
+            Follow the instructions in AGENTS.md and .ai/instructions.md for project conventions.
 
             Environment:
             - DDEV is running. Use `ddev wp` for WP-CLI commands.

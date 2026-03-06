@@ -70,6 +70,11 @@ jobs:
           TURNS=$(echo "$BODY" | grep -oP 'max-turns:\s*\K\d+' || echo "30")
           echo "max_turns=$TURNS" >> "$GITHUB_OUTPUT"
 
+      - name: Clone agency rules
+        run: |
+          git clone https://github.com/generoi/ai-agency.git ~/.claude/agency
+          ln -sf ~/.claude/agency/rules ~/.claude/rules
+
       - uses: anthropics/claude-code-action@1fc90f3ed982521116d8ff6d85b948c9b12cae3e # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
