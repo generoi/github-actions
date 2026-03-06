@@ -77,7 +77,7 @@ jobs:
           claude_args: >-
             --model ${{ inputs.model }}
             --max-turns ${{ steps.config.outputs.max_turns }}
-            --allowedTools "*"
+            --allowedTools "Bash,mcp__playwright__*,mcp__figma__*,mcp__wordpress__*"
         env:
           FIGMA_API_KEY: ${{ secrets.FIGMA_API_KEY }}
 
