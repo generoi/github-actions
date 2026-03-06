@@ -6,9 +6,6 @@ on:
       model:
         type: string
         default: claude-opus-4-6
-      mcp_config:
-        type: string
-        default: .claude/mcp-ci.json
     secrets:
       NPM_FONTAWESOME_AUTH_TOKEN:
         required: true
@@ -79,7 +76,6 @@ jobs:
           claude_args: >-
             --model ${{ inputs.model }}
             --max-turns ${{ steps.config.outputs.max_turns }}
-            --mcp-config ${{ inputs.mcp_config }}
             --allowedTools "*"
         env:
           FIGMA_API_KEY: ${{ secrets.FIGMA_API_KEY }}
