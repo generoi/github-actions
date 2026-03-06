@@ -73,7 +73,6 @@ jobs:
       - uses: anthropics/claude-code-action@1fc90f3ed982521116d8ff6d85b948c9b12cae3e # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          show_full_output: true
           claude_args: >-
             --model ${{ inputs.model }}
             --max-turns ${{ steps.config.outputs.max_turns }}

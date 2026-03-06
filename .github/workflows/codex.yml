@@ -5,7 +5,7 @@ on:
     inputs:
       model:
         type: string
-        default: o3
+        default: o3-mini
     secrets:
       NPM_FONTAWESOME_AUTH_TOKEN:
         required: true
@@ -57,6 +57,12 @@ jobs:
       - name: Optimize acorn
         run: ddev wp acorn optimize
 
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+
+      - name: Create artifacts directory
+        run: mkdir -p artifacts
+
       - name: Run Codex
         uses: openai/codex-action@f5c0ca71642badb34c1e66321d8d85685a0fa3dc # v1
         with:
@@ -65,7 +71,23 @@ jobs:
           model: ${{ inputs.model }}
           prompt: |
             You are working on the ${{ github.repository }} repository.
-            Follow the instructions in AGENTS.md and .claude/CLAUDE.md for project conventions.
+            Follow the instructions in .claude/CLAUDE.md for project conventions.
+
+            Environment:
+            - DDEV is running. Use `ddev wp` for WP-CLI commands.
+            - Sites: https://steripolarnew.ddev.site (main), https://vet.steripolarnew.ddev.site (vet)
+            - Playwright and Chromium are installed. Use `npx playwright` for browser automation.
+            - For screenshots, use Playwright with `--ignore-https-errors` flag (DDEV uses self-signed certs).
+            - Save artifacts (screenshots, exports) to the `artifacts/` directory (pre-created, auto-uploaded as workflow artifact).
+            - The database has real content from production (sanitized).
 
             Task from GitHub:
             ${{ github.event.issue.body || github.event.comment.body }}
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: codex-artifacts
+          path: artifacts/
+          if-no-files-found: ignore
