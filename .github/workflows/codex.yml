@@ -5,7 +5,7 @@ on:
     inputs:
       model:
         type: string
-        default: o3-mini
+        default: o4-mini
     secrets:
       NPM_FONTAWESOME_AUTH_TOKEN:
         required: true
