@@ -62,8 +62,9 @@ jobs:
           if [ -n "$SSH_KNOWN_HOSTS" ]; then
             echo "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
           else
-            ssh-keyscan -p $(./vendor/bin/robo config "env.@${DEPLOY_ENV}.port" || echo 22) \
-              $(./vendor/bin/robo config "env.@${DEPLOY_ENV}.host") >> ~/.ssh/known_hosts
+            ssh-keyscan \
+              -p $(yq ".env[\"@${DEPLOY_ENV}\"].port // 22" robo.yml) \
+              $(yq ".env[\"@${DEPLOY_ENV}\"].host" robo.yml) >> ~/.ssh/known_hosts
           fi
 
       - name: Run tests
