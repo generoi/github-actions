@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup project
         uses: generoi/github-actions/setup@v1
@@ -38,7 +38,7 @@ jobs:
         uses: generoi/github-actions/setup-ddev@v1
 
       - name: Download database artifact
-        uses: dawidd6/action-download-artifact@2536c51d3d126276eb39f74d6bc9c72ac6ef30d3 # v16
+        uses: dawidd6/action-download-artifact@8a338493df3d275e4a7a63bcff3b8fe97e51a927 # v19
         with:
           workflow: sync-db.yml
           name: sanitized-db
@@ -75,7 +75,7 @@ jobs:
           git clone https://github.com/generoi/ai-agency.git ~/.claude/agency
           ln -sf ~/.claude/agency/rules ~/.claude/rules
 
-      - uses: anthropics/claude-code-action@1fc90f3ed982521116d8ff6d85b948c9b12cae3e # v1
+      - uses: anthropics/claude-code-action@88c168b39e7e64da0286d812b6e9fbebb6708185 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: >-
@@ -87,7 +87,7 @@ jobs:
 
       - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: claude-artifacts
           path: artifacts/
