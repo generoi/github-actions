@@ -308,8 +308,13 @@ jobs:
           fi
 
           PROMPT=\$(cat /tmp/claude-prompt.txt)
+          # Use github-issue agent if available, otherwise plain prompt
+          AGENT_FLAG=""
+          if [ -f .claude/agents/github-issue.md ]; then
+            AGENT_FLAG="--agent github-issue"
+          fi
           JSON=\$(claude -p --verbose --dangerously-skip-permissions --output-format json \
-            "\$PROMPT" 2>/tmp/claude-stderr.log) || true
+            \$AGENT_FLAG "\$PROMPT" 2>/tmp/claude-stderr.log) || true
 
           if [ -s /tmp/claude-stderr.log ]; then
             echo "::warning::Claude stderr: \$(head -5 /tmp/claude-stderr.log)"
