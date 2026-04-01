@@ -157,10 +157,10 @@ jobs:
             cat /usr/local/share/codespace-network/config.env 2>/dev/null
             echo \"--- Feature scripts ---\"
             ls /usr/local/share/codespace-network/ 2>/dev/null
-            echo \"--- Curl localhost:8080 ---\"
-            curl -sk http://localhost:8080 2>&1 | head -3
-            echo \"--- Curl localhost:8443 ---\"
-            curl -sk https://localhost:8443 2>&1 | head -3
+            echo \"--- Curl localhost:80 ---\"
+            curl -sk http://localhost:80 2>&1 | head -3
+            echo \"--- Curl localhost:443 ---\"
+            curl -sk https://localhost:443 2>&1 | head -3
             echo \"--- Setup log (last 20 lines) ---\"
             tail -20 /tmp/codespace-setup.log 2>/dev/null
           '" 2>&1 || echo "(diagnostics failed — Codespace may not be accessible)"
@@ -168,7 +168,7 @@ jobs:
 
       - name: Make preview port public
         run: |
-          gh codespace ports visibility 8080:public -c "${{ steps.codespace.outputs.name }}"
+          gh codespace ports visibility 80:public -c "${{ steps.codespace.outputs.name }}"
 
       - name: Resolve preview URL and workspace
         id: preview
@@ -180,7 +180,7 @@ jobs:
           if [ -n "$URLS" ] && echo "$URLS" | jq -e .main >/dev/null 2>&1; then
             echo "preview_url=$(echo "$URLS" | jq -r .main)" >> "$GITHUB_OUTPUT"
           else
-            echo "preview_url=https://${CS_NAME}-8080.app.github.dev" >> "$GITHUB_OUTPUT"
+            echo "preview_url=https://${CS_NAME}-80.app.github.dev" >> "$GITHUB_OUTPUT"
           fi
 
           # Derive workspace directory from repo name
