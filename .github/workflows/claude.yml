@@ -140,6 +140,28 @@ jobs:
             sleep 10
           done
 
+      - name: Diagnostics
+        run: |
+          CS="${{ steps.codespace.outputs.name }}"
+          echo "::group::Environment"
+          gh codespace ssh -c "$CS" -- "
+            echo '--- /etc/hosts ---'
+            cat /etc/hosts
+            echo '--- DDEV ---'
+            ddev describe 2>&1 | head -10
+            echo '--- Docker ---'
+            docker ps --format 'table {{.Names}}\t{{.Ports}}' 2>&1
+            echo '--- Feature config ---'
+            cat /usr/local/share/codespace-network/config.env 2>/dev/null
+            echo '--- Feature scripts ---'
+            ls /usr/local/share/codespace-network/ 2>/dev/null
+            echo '--- Curl localhost:8080 ---'
+            curl -sk http://localhost:8080 2>&1 | head -3
+            echo '--- Curl localhost:443 ---'
+            curl -sk https://localhost:443 2>&1 | head -3
+          " 2>&1 || echo "(diagnostics failed)"
+          echo "::endgroup::"
+
       - name: Make preview port public
         run: |
           gh codespace ports visibility 8080:public -c "${{ steps.codespace.outputs.name }}"
