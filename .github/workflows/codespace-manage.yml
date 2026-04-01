@@ -1,0 +1,61 @@
+name: Manage Codespace
+
+on:
+  workflow_call:
+    inputs:
+      action:
+        type: string
+        required: true
+        description: "Action: delete, stop, rebuild"
+    secrets:
+      CODESPACE_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  manage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.CODESPACE_TOKEN }}
+    steps:
+      - name: Find Codespace
+        id: cs
+        run: |
+          NAME=$(gh codespace list --repo "${{ github.repository }}" --json name -q '.[0].name')
+          if [ -z "$NAME" ]; then
+            echo "No Codespace found for ${{ github.repository }}"
+            exit 0
+          fi
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "Found Codespace: $NAME"
+
+      - name: Execute action
+        if: steps.cs.outputs.name
+        run: |
+          CS="${{ steps.cs.outputs.name }}"
+          ACTION="${{ inputs.action }}"
+
+          case "$ACTION" in
+            delete)
+              echo "Deleting Codespace $CS..."
+              gh codespace delete -c "$CS" -f
+              echo "Deleted."
+              ;;
+            stop)
+              echo "Stopping Codespace $CS..."
+              gh codespace stop -c "$CS"
+              echo "Stopped."
+              ;;
+            rebuild)
+              echo "Deleting Codespace $CS (rebuild = delete + next trigger recreates)..."
+              gh codespace delete -c "$CS" -f
+              echo "Deleted. Next @claude trigger will create a fresh Codespace."
+              ;;
+            *)
+              echo "::error::Unknown action: $ACTION. Use: delete, stop, rebuild"
+              exit 1
+              ;;
+          esac
