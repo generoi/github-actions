@@ -400,6 +400,6 @@ jobs:
             echo "::warning::No issue or PR number available to post failure comment"
           fi
 
-      - name: Stop Codespace
-        if: always()
-        run: gh codespace stop -c "${{ steps.codespace.outputs.name }}" || true
+      # Don't stop the Codespace — let it idle-timeout naturally.
+      # Stopping immediately kills the Cloudflare tunnel, making the
+      # preview URL inaccessible before anyone can verify it.
