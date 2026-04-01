@@ -126,7 +126,7 @@ jobs:
 
       - name: Make preview port public
         run: |
-          gh codespace ports visibility 80:public -c "${{ steps.codespace.outputs.name }}"
+          gh codespace ports visibility 8080:public -c "${{ steps.codespace.outputs.name }}"
 
       - name: Resolve preview URL and workspace
         id: preview
