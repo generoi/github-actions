@@ -102,7 +102,23 @@ jobs:
             STATE=$(gh codespace list --json name,state -q ".[] | select(.name==\"$CS\") | .state")
             echo "  Attempt $i/60: state=$STATE"
             if [ "$STATE" = "Available" ]; then
-              echo "Codespace is ready."
+              echo "Codespace container is available, waiting for setup to complete..."
+              # postCreateCommand may still be running — wait for DDEV to be ready
+              for j in $(seq 1 60); do
+                if gh codespace ssh -c "$CS" -- "ddev describe >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -q web" 2>/dev/null; then
+                  echo "  DDEV is ready."
+                  break 2
+                fi
+                echo "  Setup attempt $j/60: waiting for DDEV..."
+                if [ "$j" = "60" ]; then
+                  echo "::warning::DDEV did not become ready after 10 minutes of setup"
+                  echo "::group::Setup log"
+                  gh codespace ssh -c "$CS" -- "cat /tmp/codespace-setup.log 2>/dev/null" 2>&1 || true
+                  echo "::endgroup::"
+                  break 2
+                fi
+                sleep 10
+              done
               break
             fi
             if [ "$STATE" = "Failed" ] || [ -z "$STATE" ]; then
@@ -138,7 +154,7 @@ jobs:
           if [ -n "$URLS" ] && echo "$URLS" | jq -e .main >/dev/null 2>&1; then
             echo "preview_url=$(echo "$URLS" | jq -r .main)" >> "$GITHUB_OUTPUT"
           else
-            echo "preview_url=https://${CS_NAME}-80.app.github.dev" >> "$GITHUB_OUTPUT"
+            echo "preview_url=https://${CS_NAME}-8080.app.github.dev" >> "$GITHUB_OUTPUT"
           fi
 
           # Derive workspace directory from repo name
