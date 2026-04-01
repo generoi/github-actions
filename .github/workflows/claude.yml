@@ -281,12 +281,15 @@ jobs:
           git config --global credential.helper "!f() { echo username=x-access-token; echo password=\${CODESPACE_TOKEN}; }; f"
           git config --global url."https://github.com/".insteadOf "git@github.com:"
           git fetch origin
-          git submodule update --init --recursive
+          git submodule update --init --recursive --force 2>/dev/null || true
 
-          # Check out the PR branch if applicable
+          # Check out the PR branch, or pull latest master
           if [ -n "\${CI_BRANCH:-}" ]; then
             git checkout "\$CI_BRANCH" 2>/dev/null || git checkout -b "\$CI_BRANCH" "origin/\$CI_BRANCH"
             git pull origin "\$CI_BRANCH" --rebase 2>/dev/null || true
+          else
+            git checkout master 2>/dev/null || true
+            git pull origin master --rebase 2>/dev/null || true
           fi
 
           # GitHub CLI auth
