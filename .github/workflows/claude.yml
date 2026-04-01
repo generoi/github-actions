@@ -105,8 +105,8 @@ jobs:
               echo "Codespace container is available, waiting for setup to complete..."
               # postCreateCommand may still be running — wait for DDEV to be ready
               for j in $(seq 1 60); do
-                if gh codespace ssh -c "$CS" -- "docker ps 2>/dev/null | grep -q ddev.*web" 2>/dev/null; then
-                  echo "  DDEV is ready."
+                if gh codespace ssh -c "$CS" -- "grep -q 'Codespace setup complete' /tmp/codespace-setup.log 2>/dev/null" 2>/dev/null; then
+                  echo "  Setup complete."
                   break 2
                 fi
                 LAST_LOG=$(gh codespace ssh -c "$CS" -- "tail -1 /tmp/codespace-setup.log 2>/dev/null" 2>/dev/null || echo "")
