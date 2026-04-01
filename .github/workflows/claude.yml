@@ -1,94 +1,340 @@
-name: Claude Agent
+name: Claude Agent (Codespace)
 
 on:
   workflow_call:
     inputs:
-      model:
+      codespace_machine:
         type: string
-        default: claude-opus-4-6
+        default: premiumLinux
     secrets:
-      NPM_FONTAWESOME_AUTH_TOKEN:
-        required: true
-      PACKAGIST_GITHUB_TOKEN:
-        required: true
-      DB_ARTIFACT_KEY:
+      CODESPACE_TOKEN:
         required: true
       ANTHROPIC_API_KEY:
         required: true
       FIGMA_API_KEY:
         required: false
+      CLOUDINARY_CLOUD_NAME:
+        required: false
+      CLOUDINARY_UPLOAD_PRESET:
+        required: false
+
+permissions:
+  actions: read
+  contents: write
+  id-token: write
+  pull-requests: write
+  issues: write
 
 jobs:
   claude:
+    if: |
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'failure' &&
+        startsWith(github.event.workflow_run.head_branch, 'claude/')
+      ) ||
+      (
+        github.event.sender.type == 'User' &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association || github.event.issue.author_association) &&
+        (
+          (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+          (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+          (github.event_name == 'issues' && contains(github.event.issue.body, '@claude'))
+        )
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ secrets.CODESPACE_TOKEN }}
+      CODESPACE_MACHINE: ${{ inputs.codespace_machine }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
-      - name: Setup project
-        uses: generoi/github-actions/setup@v1
-        with:
-          npm_fontawesome_auth_token: ${{ secrets.NPM_FONTAWESOME_AUTH_TOKEN }}
-          packagist_github_token: ${{ secrets.PACKAGIST_GITHUB_TOKEN }}
-
-      - name: Install and build
-        run: composer install:development
-
-      - name: Setup DDEV
-        uses: generoi/github-actions/setup-ddev@v1
-
-      - name: Download database artifact
-        uses: dawidd6/action-download-artifact@2536c51d3d126276eb39f74d6bc9c72ac6ef30d3 # v16
-        with:
-          workflow: sync-db.yml
-          name: sanitized-db
-          path: .github/fixtures/
-          github_token: ${{ github.token }}
-
-      - name: Decrypt and import database
+      - name: Acknowledge trigger
         env:
-          DB_ARTIFACT_KEY: ${{ secrets.DB_ARTIFACT_KEY }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          openssl enc -aes-256-cbc -pbkdf2 -d \
-            -in .github/fixtures/sanitized-db.sql.gz.enc \
-            -out .github/fixtures/sanitized-db.sql.gz \
-            -pass env:DB_ARTIFACT_KEY
-          ddev import-db --file=.github/fixtures/sanitized-db.sql.gz
-          rm -f .github/fixtures/sanitized-db.sql.gz .github/fixtures/sanitized-db.sql.gz.enc
+          REPO="${{ github.repository }}"
+          if [ "${{ github.event_name }}" = "issue_comment" ] || [ "${{ github.event_name }}" = "pull_request_review_comment" ]; then
+            gh api "repos/$REPO/issues/comments/${{ github.event.comment.id }}/reactions" -f content=eyes
+          elif [ "${{ github.event_name }}" = "issues" ]; then
+            gh api "repos/$REPO/issues/${{ github.event.issue.number }}/reactions" -f content=eyes
+          fi
 
-      - name: Optimize acorn
-        run: ddev wp acorn optimize
+      - name: Resolve or create Codespace
+        id: codespace
+        run: |
+          NAME=$(gh codespace list --repo "${{ github.repository }}" --json name -q '.[0].name')
+          if [ -z "$NAME" ]; then
+            NAME=$(gh codespace create -R "${{ github.repository }}" -b master --machine "$CODESPACE_MACHINE")
+          fi
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Install Playwright Chromium
-        run: npx playwright install chromium
+          STATE=$(gh codespace list --json name,state -q ".[] | select(.name==\"$NAME\") | .state")
+          if [ "$STATE" = "Shutdown" ]; then
+            echo "Codespace state is $STATE, waking via SSH..."
+            gh codespace ssh -c "$NAME" -- true 2>/dev/null || true
+          fi
 
-      - name: Parse max turns
-        id: config
+      - name: Wait for Codespace to be ready
+        run: |
+          CS="${{ steps.codespace.outputs.name }}"
+          echo "Waiting for Codespace $CS to be available..."
+          for i in $(seq 1 30); do
+            STATE=$(gh codespace list --json name,state -q ".[] | select(.name==\"$CS\") | .state")
+            echo "  Attempt $i/30: state=$STATE"
+            if [ "$STATE" = "Available" ]; then
+              break
+            fi
+            if [ "$i" = "30" ]; then
+              echo "::error::Codespace did not become available after 5 minutes"
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: Make preview port public
+        run: |
+          gh codespace ports visibility 80:public -c "${{ steps.codespace.outputs.name }}"
+
+      - name: Resolve preview URL and issue context
+        id: issue
         env:
-          BODY: ${{ github.event.issue.body || github.event.comment.body || '' }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          TURNS=$(echo "$BODY" | grep -oP 'max-turns:\s*\K\d+' || echo "30")
-          echo "max_turns=$TURNS" >> "$GITHUB_OUTPUT"
+          CS_NAME="${{ steps.codespace.outputs.name }}"
 
-      - name: Clone agency rules
-        run: |
-          git clone https://github.com/generoi/ai-agency.git ~/.claude/agency
-          ln -sf ~/.claude/agency/rules ~/.claude/rules
+          # Get preview URL from the codespace-network feature
+          URLS=$(gh codespace ssh -c "$CS_NAME" -- "/usr/local/share/codespace-network/cs-network-urls.sh" 2>/dev/null) || true
+          if [ -n "$URLS" ] && echo "$URLS" | jq -e .main >/dev/null 2>&1; then
+            echo "preview_url=$(echo "$URLS" | jq -r .main)" >> "$GITHUB_OUTPUT"
+          else
+            echo "preview_url=https://${CS_NAME}-80.app.github.dev" >> "$GITHUB_OUTPUT"
+          fi
 
-      - uses: anthropics/claude-code-action@1fc90f3ed982521116d8ff6d85b948c9b12cae3e # v1
-        with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_args: >-
-            --model ${{ inputs.model }}
-            --max-turns ${{ steps.config.outputs.max_turns }}
-            --allowedTools "Bash,mcp__playwright__*,mcp__figma__*,mcp__wordpress__*"
+          # Derive workspace directory from repo name
+          REPO_NAME="${{ github.event.repository.name }}"
+          WORKSPACE=$(gh codespace ssh -c "$CS_NAME" -- "ls /workspaces/" 2>/dev/null | grep -m1 "$REPO_NAME" || echo "$REPO_NAME")
+          echo "workspace=$WORKSPACE" >> "$GITHUB_OUTPUT"
+
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            BRANCH="${{ github.event.workflow_run.head_branch }}"
+            PR_NUMBER=$(gh pr list -R "${{ github.repository }}" --head "$BRANCH" --json number -q '.[0].number')
+            ISSUE_NUMBER=$(echo "$BRANCH" | sed 's/claude\/issue-//')
+            echo "number=${ISSUE_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "pull_request_review_comment" ]; then
+            echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+            echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+            echo "pr_branch=${{ github.event.pull_request.head.ref }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build prompt
         env:
-          FIGMA_API_KEY: ${{ secrets.FIGMA_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          ISSUE=${{ steps.issue.outputs.number }}
+          REPO="${{ github.repository }}"
 
-      - name: Upload artifacts
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            RUN_ID="${{ github.event.workflow_run.id }}"
+            BRANCH="${{ github.event.workflow_run.head_branch }}"
+
+            # Prevent infinite retry loops: max 3 fix attempts per branch
+            RECENT_FIXES=$(gh run list -R "$REPO" -w "Claude Agent" -L 10 \
+              --json event,headBranch -q "[.[] | select(.event==\"workflow_run\" and .headBranch==\"$BRANCH\")] | length" 2>/dev/null || echo "0")
+            if [ "$RECENT_FIXES" -ge 3 ]; then
+              echo "Skipping: already attempted $RECENT_FIXES fixes on $BRANCH"
+              exit 0
+            fi
+
+            FAILED_JOBS=$(gh run view "$RUN_ID" -R "$REPO" --json jobs -q '.jobs[] | select(.conclusion=="failure") | .name')
+            LOGS=$(gh run view "$RUN_ID" -R "$REPO" --log-failed 2>/dev/null | tail -100)
+
+            cat > /tmp/claude-prompt.txt <<PROMPT_EOF
+          CI tests failed on branch ${BRANCH} (workflow run #${RUN_ID}).
+
+          Failed jobs: ${FAILED_JOBS}
+
+          Last 100 lines of failed job logs:
+          ${LOGS}
+
+          Please analyze the failures, fix the issues, commit, and push to the same branch.
+          PROMPT_EOF
+          elif [ "${{ github.event_name }}" = "pull_request_review_comment" ]; then
+            {
+              echo "## PR review comment"
+              echo ""
+              echo "File: ${{ github.event.comment.path }}"
+              echo "Line: ${{ github.event.comment.line }}"
+              echo ""
+              echo "Diff hunk:"
+              echo '```'
+              echo "${{ github.event.comment.diff_hunk }}"
+              echo '```'
+              echo ""
+              echo "Review comment:"
+              echo "$COMMENT_BODY" | sed 's/@claude//g'
+              echo ""
+              echo "## Other review comments on this PR"
+              echo ""
+              gh api "repos/$REPO/pulls/$ISSUE/comments" \
+                --jq '.[] | "**\(.user.login)** on \(.path):\(.line):\n\(.body)\n---"' 2>/dev/null | tail -50
+            } > /tmp/claude-prompt.txt
+          elif [ "${{ github.event_name }}" = "issues" ]; then
+            BODY=$(gh issue view "$ISSUE" -R "$REPO" --json body -q .body)
+            echo "$BODY" | sed 's/@claude//g' > /tmp/claude-prompt.txt
+          else
+            {
+              echo "## Previous conversation on this issue"
+              echo ""
+              gh issue view "$ISSUE" -R "$REPO" --json body -q .body 2>/dev/null
+              echo ""
+              gh issue view "$ISSUE" -R "$REPO" --json comments \
+                -q '.comments[-10:][] | "**\(.author.login)** (\(.createdAt)):\n\(.body)\n---"' 2>/dev/null
+              echo ""
+              echo "## New request"
+              echo ""
+              echo "$COMMENT_BODY" | sed 's/@claude//g'
+            } > /tmp/claude-prompt.txt
+          fi
+
+      - name: Run Claude in Codespace
+        run: |
+          CS="${{ steps.codespace.outputs.name }}"
+          WORKSPACE="${{ steps.issue.outputs.workspace }}"
+
+          # Build the runner script
+          cat > /tmp/claude-runner.sh << BASHEOF
+          #!/bin/bash
+          set -e
+          export PATH="\$HOME/.local/bin:\$PATH"
+          cd "/workspaces/$WORKSPACE"
+
+          # Install Claude CLI if missing
+          if ! command -v claude &>/dev/null; then
+            curl -fsSL https://claude.ai/install.sh | bash
+            export PATH="\$HOME/.local/bin:\$PATH"
+          fi
+
+          # Git auth
+          git config --global credential.helper "!f() { echo username=x-access-token; echo password=\${CODESPACE_TOKEN}; }; f"
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git fetch origin
+          git submodule update --init --recursive
+
+          # Check out the PR branch if applicable
+          if [ -n "\${CI_BRANCH:-}" ]; then
+            git checkout "\$CI_BRANCH" 2>/dev/null || git checkout -b "\$CI_BRANCH" "origin/\$CI_BRANCH"
+            git pull origin "\$CI_BRANCH" --rebase 2>/dev/null || true
+          fi
+
+          # GitHub CLI auth
+          echo "\${CODESPACE_TOKEN}" | gh auth login --with-token 2>/dev/null || true
+
+          # Append CI instructions to prompt
+          if [ -n "\${CI_BRANCH:-}" ]; then
+            printf '\n\nCI instructions (always follow):\n' >> /tmp/claude-prompt.txt
+            printf -- '- You are on branch %s. Make changes and push to this branch.\n' "\$CI_BRANCH" >> /tmp/claude-prompt.txt
+            printf -- '- Preview URL: %s\n' "\$CODESPACE_PREVIEW_URL" >> /tmp/claude-prompt.txt
+          else
+            printf '\n\nCI instructions (always follow):\n' >> /tmp/claude-prompt.txt
+            printf -- '- If your task involves code changes: create branch claude/issue-%s, commit changes, push, and create a PR linking to #%s.\n' "\$GITHUB_ISSUE" "\$GITHUB_ISSUE" >> /tmp/claude-prompt.txt
+            printf -- '- If it is a question or investigation: just respond in the comment, no PR needed.\n' >> /tmp/claude-prompt.txt
+            printf -- '- Preview URL: %s\n' "\$CODESPACE_PREVIEW_URL" >> /tmp/claude-prompt.txt
+          fi
+
+          PROMPT=\$(cat /tmp/claude-prompt.txt)
+          JSON=\$(claude -p --verbose --dangerously-skip-permissions --output-format json \
+            "\$PROMPT" 2>/tmp/claude-stderr.log) || true
+
+          if [ -s /tmp/claude-stderr.log ]; then
+            echo "::warning::Claude stderr: \$(head -5 /tmp/claude-stderr.log)"
+          fi
+
+          if [ -z "\$JSON" ]; then
+            STDERR=\$(cat /tmp/claude-stderr.log 2>/dev/null || echo "unknown error")
+            RESULT="⚠️ Claude produced no output. Error: \${STDERR}"
+          fi
+          RESULT=\${RESULT:-\$(echo "\$JSON" | jq -r 'if type == "array" then .[-1].result else .result end // "No response"')}
+          COST=\$(echo "\$JSON" | jq -r 'if type == "array" then .[-1].total_cost_usd else .total_cost_usd end // 0')
+          COST_DISPLAY=\$(printf '\$%.2f' "\$COST")
+
+          DURATION=\$(echo "\$JSON" | jq -r 'if type == "array" then .[-1].duration_ms else .duration_ms end // 0')
+          DURATION_DISPLAY=\$(printf '%ds' "\$((DURATION / 1000))")
+          TURNS=\$(echo "\$JSON" | jq -r 'if type == "array" then .[-1].num_turns else .num_turns end // 0')
+
+          # Auto-screenshot if Claude didn't embed one
+          SCREENSHOT_MD=""
+          if [ -n "\$CLOUDINARY_CLOUD_NAME" ] && [ -n "\$CLOUDINARY_UPLOAD_PRESET" ] && ! echo "\$RESULT" | grep -q '!\[.*\](http'; then
+            if timeout 30 npx playwright screenshot --ignore-https-errors --wait-for-timeout=3000 \
+              "\$CODESPACE_PREVIEW_URL" /tmp/screenshot.png 2>/dev/null; then
+              IMG_URL=\$(curl -s -X POST \
+                -F "file=@/tmp/screenshot.png" \
+                -F "upload_preset=\$CLOUDINARY_UPLOAD_PRESET" \
+                "https://api.cloudinary.com/v1_1/\$CLOUDINARY_CLOUD_NAME/image/upload" | jq -r '.secure_url // empty')
+              if [ -n "\$IMG_URL" ]; then
+                SCREENSHOT_MD=\$(printf '\n\n![Preview screenshot](%s)' "\$IMG_URL")
+              fi
+            fi
+          fi
+
+          BODY=\$(printf '%s\n\n---\n🔗 [Preview](%s) · 💰 %s · ⏱️ %s · 🔄 %s turns%s' "\$RESULT" "\$CODESPACE_PREVIEW_URL" "\$COST_DISPLAY" "\$DURATION_DISPLAY" "\$TURNS" "\$SCREENSHOT_MD")
+          if [ -n "\${CI_PR_NUMBER:-}" ]; then
+            gh pr comment "\$CI_PR_NUMBER" -R "\$GITHUB_REPOSITORY" --body "\$BODY"
+          else
+            gh issue comment "\$GITHUB_ISSUE" -R "\$GITHUB_REPOSITORY" --body "\$BODY"
+          fi
+          BASHEOF
+          chmod +x /tmp/claude-runner.sh
+
+          # Transfer files to Codespace
+          gh codespace ssh -c "$CS" -- "cat > /tmp/claude-prompt.txt" < /tmp/claude-prompt.txt
+          gh codespace ssh -c "$CS" -- "cat > /tmp/claude-runner.sh && chmod +x /tmp/claude-runner.sh" < /tmp/claude-runner.sh
+
+          # Execute with env vars
+          gh codespace ssh -c "$CS" -- "\
+            export PATH=\"\$HOME/.local/bin:\$PATH\" && \
+            export CODESPACE_TOKEN='${{ secrets.CODESPACE_TOKEN }}' && \
+            export ANTHROPIC_API_KEY='${{ secrets.ANTHROPIC_API_KEY }}' && \
+            export FIGMA_API_KEY='${{ secrets.FIGMA_API_KEY }}' && \
+            export CODESPACE_PREVIEW_URL='${{ steps.issue.outputs.preview_url }}' && \
+            export CLOUDINARY_CLOUD_NAME='${{ secrets.CLOUDINARY_CLOUD_NAME }}' && \
+            export CLOUDINARY_UPLOAD_PRESET='${{ secrets.CLOUDINARY_UPLOAD_PRESET }}' && \
+            export GITHUB_ISSUE=${{ steps.issue.outputs.number }} && \
+            export GITHUB_REPOSITORY='${{ github.repository }}' && \
+            export CI_BRANCH='${{ github.event.workflow_run.head_branch || steps.issue.outputs.pr_branch }}' && \
+            export CI_PR_NUMBER='${{ steps.issue.outputs.pr_number }}' && \
+            bash /tmp/claude-runner.sh"
+
+      - name: Dump Codespace logs on failure
+        if: failure()
+        run: |
+          CS="${{ steps.codespace.outputs.name }}"
+          echo "::group::Codespace setup log"
+          gh codespace ssh -c "$CS" -- "cat /tmp/codespace-setup.log 2>/dev/null" || echo "(no setup log)"
+          echo "::endgroup::"
+          echo "::group::Claude stderr"
+          gh codespace ssh -c "$CS" -- "cat /tmp/claude-stderr.log 2>/dev/null" || echo "(no stderr log)"
+          echo "::endgroup::"
+
+      - name: Post failure comment
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ISSUE="${{ steps.issue.outputs.number }}"
+          PR="${{ steps.issue.outputs.pr_number }}"
+          BODY="❌ Claude failed to process this request. [View logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          if [ -n "$PR" ]; then
+            gh pr comment "$PR" -R "${{ github.repository }}" --body "$BODY"
+          elif [ -n "$ISSUE" ]; then
+            gh issue comment "$ISSUE" -R "${{ github.repository }}" --body "$BODY"
+          else
+            echo "::warning::No issue or PR number available to post failure comment"
+          fi
+
+      - name: Stop Codespace
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: claude-artifacts
-          path: artifacts/
-          if-no-files-found: ignore
+        run: gh codespace stop -c "${{ steps.codespace.outputs.name }}" || true
