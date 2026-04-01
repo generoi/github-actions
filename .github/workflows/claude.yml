@@ -109,7 +109,8 @@ jobs:
                   echo "  DDEV is ready."
                   break 2
                 fi
-                echo "  Setup attempt $j/60: waiting for DDEV..."
+                LAST_LOG=$(gh codespace ssh -c "$CS" -- "tail -1 /tmp/codespace-setup.log 2>/dev/null" 2>/dev/null || echo "")
+                echo "  Setup attempt $j/60: waiting for DDEV... ($LAST_LOG)"
                 if [ "$j" = "60" ]; then
                   echo "::warning::DDEV did not become ready after 10 minutes of setup"
                   echo "::group::Setup log"
