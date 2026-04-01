@@ -142,25 +142,28 @@ jobs:
           done
 
       - name: Diagnostics
+        if: always() && steps.codespace.outputs.name
         run: |
           CS="${{ steps.codespace.outputs.name }}"
-          echo "::group::Environment"
-          gh codespace ssh -c "$CS" -- "
-            echo '--- /etc/hosts ---'
+          echo "::group::Codespace diagnostics"
+          gh codespace ssh -c "$CS" -- "bash -c '
+            echo \"--- /etc/hosts ---\"
             cat /etc/hosts
-            echo '--- DDEV ---'
-            ddev describe 2>&1 | head -10
-            echo '--- Docker ---'
-            docker ps --format 'table {{.Names}}\t{{.Ports}}' 2>&1
-            echo '--- Feature config ---'
+            echo \"--- DDEV ---\"
+            ddev describe 2>&1 | head -15
+            echo \"--- Docker containers ---\"
+            docker ps --format \"table {{.Names}}\t{{.Ports}}\" 2>&1
+            echo \"--- Feature config ---\"
             cat /usr/local/share/codespace-network/config.env 2>/dev/null
-            echo '--- Feature scripts ---'
+            echo \"--- Feature scripts ---\"
             ls /usr/local/share/codespace-network/ 2>/dev/null
-            echo '--- Curl localhost:8080 ---'
+            echo \"--- Curl localhost:8080 ---\"
             curl -sk http://localhost:8080 2>&1 | head -3
-            echo '--- Curl localhost:443 ---'
-            curl -sk https://localhost:443 2>&1 | head -3
-          " 2>&1 || echo "(diagnostics failed)"
+            echo \"--- Curl localhost:8443 ---\"
+            curl -sk https://localhost:8443 2>&1 | head -3
+            echo \"--- Setup log (last 20 lines) ---\"
+            tail -20 /tmp/codespace-setup.log 2>/dev/null
+          '" 2>&1 || echo "(diagnostics failed — Codespace may not be accessible)"
           echo "::endgroup::"
 
       - name: Make preview port public
