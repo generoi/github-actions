@@ -1,4 +1,4 @@
-name: Sync DB from Production
+name: "Manage: Sync Production"
 
 on:
   workflow_call:

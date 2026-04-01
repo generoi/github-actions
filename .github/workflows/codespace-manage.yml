@@ -1,4 +1,4 @@
-name: Manage Codespace
+name: "Manage: Codespace"
 
 on:
   workflow_call:

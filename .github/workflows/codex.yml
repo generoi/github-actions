@@ -1,4 +1,4 @@
-name: Codex Agent
+name: "CI: @codex"
 
 on:
   workflow_call:
