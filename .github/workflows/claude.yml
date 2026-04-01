@@ -48,15 +48,33 @@ jobs:
       GH_TOKEN: ${{ secrets.CODESPACE_TOKEN }}
       CODESPACE_MACHINE: ${{ inputs.codespace_machine }}
     steps:
-      - name: Acknowledge trigger
+      - name: Resolve issue context
+        id: issue
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           REPO="${{ github.repository }}"
+
+          # Acknowledge trigger with eyes reaction
           if [ "${{ github.event_name }}" = "issue_comment" ] || [ "${{ github.event_name }}" = "pull_request_review_comment" ]; then
             gh api "repos/$REPO/issues/comments/${{ github.event.comment.id }}/reactions" -f content=eyes
           elif [ "${{ github.event_name }}" = "issues" ]; then
             gh api "repos/$REPO/issues/${{ github.event.issue.number }}/reactions" -f content=eyes
+          fi
+
+          # Resolve issue/PR number (needed early for failure comments)
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            BRANCH="${{ github.event.workflow_run.head_branch }}"
+            PR_NUMBER=$(gh pr list -R "$REPO" --head "$BRANCH" --json number -q '.[0].number')
+            ISSUE_NUMBER=$(echo "$BRANCH" | sed 's/claude\/issue-//')
+            echo "number=${ISSUE_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "pull_request_review_comment" ]; then
+            echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+            echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+            echo "pr_branch=${{ github.event.pull_request.head.ref }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Resolve or create Codespace
@@ -64,13 +82,15 @@ jobs:
         run: |
           NAME=$(gh codespace list --repo "${{ github.repository }}" --json name -q '.[0].name')
           if [ -z "$NAME" ]; then
+            echo "Creating new Codespace..."
             NAME=$(gh codespace create -R "${{ github.repository }}" -b master --machine "$CODESPACE_MACHINE")
           fi
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
 
           STATE=$(gh codespace list --json name,state -q ".[] | select(.name==\"$NAME\") | .state")
+          echo "Initial state: $STATE"
           if [ "$STATE" = "Shutdown" ]; then
-            echo "Codespace state is $STATE, waking via SSH..."
+            echo "Waking Codespace via SSH..."
             gh codespace ssh -c "$NAME" -- true 2>/dev/null || true
           fi
 
@@ -78,14 +98,27 @@ jobs:
         run: |
           CS="${{ steps.codespace.outputs.name }}"
           echo "Waiting for Codespace $CS to be available..."
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             STATE=$(gh codespace list --json name,state -q ".[] | select(.name==\"$CS\") | .state")
-            echo "  Attempt $i/30: state=$STATE"
+            echo "  Attempt $i/60: state=$STATE"
             if [ "$STATE" = "Available" ]; then
+              echo "Codespace is ready."
               break
             fi
-            if [ "$i" = "30" ]; then
-              echo "::error::Codespace did not become available after 5 minutes"
+            if [ "$STATE" = "Failed" ] || [ -z "$STATE" ]; then
+              echo "::error::Codespace entered $STATE state"
+              # Try to get creation log
+              echo "::group::Codespace creation log"
+              gh codespace ssh -c "$CS" -- "cat /tmp/codespace-setup.log 2>/dev/null; cat /workspaces/.codespaces/.persistedshare/creation.log 2>/dev/null" 2>&1 || echo "(could not retrieve logs)"
+              echo "::endgroup::"
+              exit 1
+            fi
+            if [ "$i" = "60" ]; then
+              echo "::error::Codespace did not become available after 10 minutes (last state: $STATE)"
+              # Try to get creation log even for timeout
+              echo "::group::Codespace creation log"
+              gh codespace ssh -c "$CS" -- "cat /tmp/codespace-setup.log 2>/dev/null; cat /workspaces/.codespaces/.persistedshare/creation.log 2>/dev/null" 2>&1 || echo "(could not retrieve logs — Codespace may still be provisioning)"
+              echo "::endgroup::"
               exit 1
             fi
             sleep 10
@@ -95,10 +128,8 @@ jobs:
         run: |
           gh codespace ports visibility 80:public -c "${{ steps.codespace.outputs.name }}"
 
-      - name: Resolve preview URL and issue context
-        id: issue
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Resolve preview URL and workspace
+        id: preview
         run: |
           CS_NAME="${{ steps.codespace.outputs.name }}"
 
@@ -114,20 +145,6 @@ jobs:
           REPO_NAME="${{ github.event.repository.name }}"
           WORKSPACE=$(gh codespace ssh -c "$CS_NAME" -- "ls /workspaces/" 2>/dev/null | grep -m1 "$REPO_NAME" || echo "$REPO_NAME")
           echo "workspace=$WORKSPACE" >> "$GITHUB_OUTPUT"
-
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            BRANCH="${{ github.event.workflow_run.head_branch }}"
-            PR_NUMBER=$(gh pr list -R "${{ github.repository }}" --head "$BRANCH" --json number -q '.[0].number')
-            ISSUE_NUMBER=$(echo "$BRANCH" | sed 's/claude\/issue-//')
-            echo "number=${ISSUE_NUMBER}" >> "$GITHUB_OUTPUT"
-            echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event_name }}" = "pull_request_review_comment" ]; then
-            echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
-            echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
-            echo "pr_branch=${{ github.event.pull_request.head.ref }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Build prompt
         env:
@@ -203,7 +220,7 @@ jobs:
       - name: Run Claude in Codespace
         run: |
           CS="${{ steps.codespace.outputs.name }}"
-          WORKSPACE="${{ steps.issue.outputs.workspace }}"
+          WORKSPACE="${{ steps.preview.outputs.workspace }}"
 
           # Build the runner script
           cat > /tmp/claude-runner.sh << BASHEOF
@@ -299,7 +316,7 @@ jobs:
             export CODESPACE_TOKEN='${{ secrets.CODESPACE_TOKEN }}' && \
             export ANTHROPIC_API_KEY='${{ secrets.ANTHROPIC_API_KEY }}' && \
             export FIGMA_API_KEY='${{ secrets.FIGMA_API_KEY }}' && \
-            export CODESPACE_PREVIEW_URL='${{ steps.issue.outputs.preview_url }}' && \
+            export CODESPACE_PREVIEW_URL='${{ steps.preview.outputs.preview_url }}' && \
             export CLOUDINARY_CLOUD_NAME='${{ secrets.CLOUDINARY_CLOUD_NAME }}' && \
             export CLOUDINARY_UPLOAD_PRESET='${{ secrets.CLOUDINARY_UPLOAD_PRESET }}' && \
             export GITHUB_ISSUE=${{ steps.issue.outputs.number }} && \
@@ -313,10 +330,13 @@ jobs:
         run: |
           CS="${{ steps.codespace.outputs.name }}"
           echo "::group::Codespace setup log"
-          gh codespace ssh -c "$CS" -- "cat /tmp/codespace-setup.log 2>/dev/null" || echo "(no setup log)"
+          gh codespace ssh -c "$CS" -- "cat /tmp/codespace-setup.log 2>/dev/null" 2>&1 || echo "(no setup log — Codespace may not be accessible)"
+          echo "::endgroup::"
+          echo "::group::Codespace creation log"
+          gh codespace ssh -c "$CS" -- "cat /workspaces/.codespaces/.persistedshare/creation.log 2>/dev/null" 2>&1 || echo "(no creation log)"
           echo "::endgroup::"
           echo "::group::Claude stderr"
-          gh codespace ssh -c "$CS" -- "cat /tmp/claude-stderr.log 2>/dev/null" || echo "(no stderr log)"
+          gh codespace ssh -c "$CS" -- "cat /tmp/claude-stderr.log 2>/dev/null" 2>&1 || echo "(no stderr log)"
           echo "::endgroup::"
 
       - name: Post failure comment
