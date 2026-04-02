@@ -93,8 +93,8 @@ jobs:
           STATE=$(gh codespace list --json name,state -q ".[] | select(.name==\"$NAME\") | .state")
           echo "Initial state: $STATE"
           if [ "$STATE" = "Shutdown" ]; then
-            echo "Waking Codespace via SSH..."
-            gh codespace ssh -c "$NAME" -- true 2>/dev/null || true
+            echo "Starting Codespace via API..."
+            gh api -X POST "/user/codespaces/$NAME/start" 2>/dev/null || true
           fi
 
       - name: Wait for Codespace to be ready
