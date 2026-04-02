@@ -6,7 +6,7 @@ on:
       action:
         type: string
         required: true
-        description: "Action: delete, stop, rebuild"
+        description: "Action: start, stop, rebuild, delete"
     secrets:
       CODESPACE_TOKEN:
         required: true
@@ -17,20 +17,30 @@ permissions:
 jobs:
   manage:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     env:
       GH_TOKEN: ${{ secrets.CODESPACE_TOKEN }}
     steps:
-      - name: Find Codespace
+      - name: Find or create Codespace
         id: cs
         run: |
           NAME=$(gh codespace list --repo "${{ github.repository }}" --json name -q '.[0].name')
+          ACTION="${{ inputs.action }}"
+
+          if [ -z "$NAME" ] && [ "$ACTION" = "start" ]; then
+            echo "Creating new Codespace..."
+            NAME=$(gh codespace create -R "${{ github.repository }}" -b master --machine premiumLinux)
+          fi
+
           if [ -z "$NAME" ]; then
             echo "No Codespace found for ${{ github.repository }}"
             exit 0
           fi
+
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
-          echo "Found Codespace: $NAME"
+          STATE=$(gh codespace list --json name,state -q ".[] | select(.name==\"$NAME\") | .state")
+          echo "state=$STATE" >> "$GITHUB_OUTPUT"
+          echo "Found Codespace: $NAME (state: $STATE)"
 
       - name: Execute action
         if: steps.cs.outputs.name
@@ -39,23 +49,47 @@ jobs:
           ACTION="${{ inputs.action }}"
 
           case "$ACTION" in
-            delete)
-              echo "Deleting Codespace $CS..."
-              gh codespace delete -c "$CS" -f
-              echo "Deleted."
+            start)
+              STATE="${{ steps.cs.outputs.state }}"
+              if [ "$STATE" = "Available" ]; then
+                echo "Codespace is already running."
+              else
+                echo "Starting Codespace $CS..."
+                gh codespace ssh -c "$CS" -- true 2>/dev/null || true
+                for i in $(seq 1 30); do
+                  STATE=$(gh codespace list --json name,state -q ".[] | select(.name==\"$CS\") | .state")
+                  if [ "$STATE" = "Available" ]; then
+                    echo "Codespace is ready."
+                    break
+                  fi
+                  echo "  Waiting... ($STATE)"
+                  sleep 10
+                done
+              fi
+
+              # Output preview URL
+              URLS=$(gh codespace ssh -c "$CS" -- "/usr/local/share/codespace-network/cs-network-urls.sh" 2>/dev/null) || true
+              if [ -n "$URLS" ]; then
+                echo "Preview URLs: $URLS"
+              fi
               ;;
             stop)
               echo "Stopping Codespace $CS..."
               gh codespace stop -c "$CS"
               echo "Stopped."
               ;;
+            delete)
+              echo "Deleting Codespace $CS..."
+              gh codespace delete -c "$CS" -f
+              echo "Deleted."
+              ;;
             rebuild)
               echo "Deleting Codespace $CS (rebuild = delete + next trigger recreates)..."
               gh codespace delete -c "$CS" -f
-              echo "Deleted. Next @claude trigger will create a fresh Codespace."
+              echo "Deleted. Next trigger will create a fresh Codespace."
               ;;
             *)
-              echo "::error::Unknown action: $ACTION. Use: delete, stop, rebuild"
+              echo "::error::Unknown action: $ACTION. Use: start, stop, rebuild, delete"
               exit 1
               ;;
           esac
