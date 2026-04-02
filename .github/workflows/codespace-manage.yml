@@ -88,8 +88,13 @@ jobs:
               gh codespace delete -c "$CS" -f
               echo "Deleted. Next trigger will create a fresh Codespace."
               ;;
+            import)
+              echo "Importing production data into Codespace $CS..."
+              gh codespace ssh -c "$CS" -- "bash -c 'cd /workspaces/* && /usr/local/share/codespace-network/cs-import-production.sh'" 2>&1
+              echo "Import complete."
+              ;;
             *)
-              echo "::error::Unknown action: $ACTION. Use: start, stop, rebuild, delete"
+              echo "::error::Unknown action: $ACTION. Use: start, stop, rebuild, delete, import"
               exit 1
               ;;
           esac
