@@ -34,12 +34,15 @@ jobs:
         startsWith(github.event.workflow_run.head_branch, 'claude/')
       ) ||
       (
+        github.event_name == 'issues' &&
+        contains(github.event.issue.body, '@claude')
+      ) ||
+      (
         github.event.sender.type == 'User' &&
         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association || github.event.issue.author_association) &&
         (
           (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-          (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-          (github.event_name == 'issues' && contains(github.event.issue.body, '@claude'))
+          (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
         )
       )
     runs-on: ubuntu-latest
