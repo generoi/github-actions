@@ -42,10 +42,22 @@ runs:
       run: |
         echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
 
-    - name: Composer Cache
+    - name: Composer download cache
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: ${{ steps.composer-cache.outputs.dir }}
         key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
         restore-keys: |
           ${{ runner.os }}-composer-
+
+    - name: Composer vendor cache
+      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+      with:
+        path: vendor
+        key: ${{ runner.os }}-vendor-${{ hashFiles('**/composer.lock') }}
+
+    - name: Node modules cache
+      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+      with:
+        path: '**/node_modules'
+        key: ${{ runner.os }}-node-modules-${{ hashFiles('**/package-lock.json') }}
