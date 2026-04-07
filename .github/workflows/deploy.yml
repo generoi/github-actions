@@ -43,8 +43,10 @@ jobs:
           npm_fontawesome_auth_token: ${{ secrets.NPM_FONTAWESOME_AUTH_TOKEN }}
           packagist_github_token: ${{ secrets.PACKAGIST_GITHUB_TOKEN }}
 
-      - name: Install development packages to run tests
-        run: composer install:development
+      - name: Install dependencies for testing
+        run: |
+          composer install --no-interaction
+          npm install
 
       - name: Configure SSH
         if: inputs.ssh_config != ''
