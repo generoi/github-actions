@@ -63,11 +63,33 @@ jobs:
 
       - name: Enable debugging
         if: failure() || inputs.debug
-        run: sed -i 's/.*WP_ENVIRONMENT_TYPE=.*/WP_ENVIRONMENT_TYPE=development/g' .env
+        run: |
+          # Set development environment for debug output
+          if grep -q WP_ENVIRONMENT_TYPE .env; then
+            sed -i 's/.*WP_ENVIRONMENT_TYPE=.*/WP_ENVIRONMENT_TYPE=development/g' .env
+          else
+            echo 'WP_ENVIRONMENT_TYPE=development' >> .env
+          fi
+          # Clear Acorn's cached config so the env change takes effect
+          ./vendor/bin/wp acorn optimize:clear 2>/dev/null || true
+          ./vendor/bin/wp acorn config:clear 2>/dev/null || true
 
       - name: Display debug response
         if: failure() || inputs.debug
-        run: curl -v http://localhost:8080/
+        run: |
+          BODY=$(curl -s http://localhost:8080/)
+          # Acorn renders errors in a JS app with the error embedded as a markdown constant.
+          # Extract and print it so the error is visible in CI logs.
+          ERROR=$(echo "$BODY" | grep -o "const markdown = '[^']*'" | sed "s/const markdown = '//;s/'$//" | sed 's/\\n/\n/g' 2>/dev/null || true)
+          if [ -n "$ERROR" ]; then
+            echo "--- Acorn error page ---"
+            echo "$ERROR"
+          fi
+          # Also check for wp_die() error pages
+          echo "$BODY" | grep -o '<div class="wp-die-message">.*</div>' 2>/dev/null | sed 's/<[^>]*>//g' || true
+          # Show full verbose response as fallback
+          echo "--- Full response ---"
+          curl -v http://localhost:8080/ 2>&1 | head -100
 
       - name: Check if phpunit is available
         id: has-phpunit
