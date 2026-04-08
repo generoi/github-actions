@@ -17,6 +17,10 @@ on:
         required: false
       CLOUDINARY_UPLOAD_PRESET:
         required: false
+      NPM_FONTAWESOME_AUTH_TOKEN:
+        required: false
+      PACKAGIST_GITHUB_TOKEN:
+        required: false
 
 permissions:
   actions: read
@@ -373,6 +377,8 @@ jobs:
             export CODESPACE_PREVIEW_URL='${{ steps.preview.outputs.preview_url }}' && \
             export CLOUDINARY_CLOUD_NAME='${{ secrets.CLOUDINARY_CLOUD_NAME }}' && \
             export CLOUDINARY_UPLOAD_PRESET='${{ secrets.CLOUDINARY_UPLOAD_PRESET }}' && \
+            export NPM_FONTAWESOME_AUTH_TOKEN='${{ secrets.NPM_FONTAWESOME_AUTH_TOKEN }}' && \
+            export PACKAGIST_GITHUB_TOKEN='${{ secrets.PACKAGIST_GITHUB_TOKEN }}' && \
             export GITHUB_ISSUE=${{ steps.issue.outputs.number }} && \
             export GITHUB_REPOSITORY='${{ github.repository }}' && \
             export CI_BRANCH='${{ github.event.workflow_run.head_branch || steps.issue.outputs.pr_branch }}' && \
