@@ -291,13 +291,30 @@ jobs:
           git fetch origin
           git submodule update --init --recursive --force 2>/dev/null || true
 
-          # Check out the PR branch, or pull latest master
+          # Clean up stale worktrees from previous runs
+          git worktree prune 2>/dev/null || true
+          for wt in .claude/worktrees/*/; do
+            [ -d "\$wt" ] && git worktree remove --force "\$wt" 2>/dev/null || true
+          done
+
+          # Determine the working branch
+          ISSUE_BRANCH="claude/issue-\${GITHUB_ISSUE}"
           if [ -n "\${CI_BRANCH:-}" ]; then
-            git checkout "\$CI_BRANCH" 2>/dev/null || git checkout -b "\$CI_BRANCH" "origin/\$CI_BRANCH"
-            git pull origin "\$CI_BRANCH" --rebase 2>/dev/null || true
+            WORK_BRANCH="\$CI_BRANCH"
+          elif git rev-parse --verify "origin/\$ISSUE_BRANCH" &>/dev/null; then
+            WORK_BRANCH="\$ISSUE_BRANCH"
           else
-            git checkout master 2>/dev/null || true
-            git pull origin master --rebase 2>/dev/null || true
+            WORK_BRANCH=""
+          fi
+
+          # Always update master to latest
+          git checkout master 2>/dev/null || true
+          git reset --hard origin/master
+
+          # Check out existing branch and rebase, or stay on fresh master
+          if [ -n "\$WORK_BRANCH" ]; then
+            git checkout "\$WORK_BRANCH" 2>/dev/null || git checkout -b "\$WORK_BRANCH" "origin/\$WORK_BRANCH"
+            git rebase origin/master 2>/dev/null || git rebase --abort 2>/dev/null || true
           fi
 
           # GitHub CLI auth
