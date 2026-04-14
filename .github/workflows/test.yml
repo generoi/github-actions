@@ -15,6 +15,9 @@ on:
       activate_plugins:
         type: string
         default: ''
+      redis:
+        type: boolean
+        default: false
     secrets:
       NPM_FONTAWESOME_AUTH_TOKEN:
         required: true
@@ -46,6 +49,7 @@ jobs:
         with:
           multisite: ${{ inputs.multisite }}
           activate_plugins: ${{ inputs.activate_plugins }}
+          redis: ${{ inputs.redis }}
 
       - name: Optimize acorn
         run: ./vendor/bin/wp acorn optimize

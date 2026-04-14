@@ -9,10 +9,18 @@ inputs:
     description: 'Space-separated list of plugins to activate after install (e.g. "advanced-custom-fields polylang-pro")'
     required: false
     default: ''
+  redis:
+    description: 'Start a Redis server and configure WP_REDIS_HOST in .env'
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
   steps:
+    - name: Start Redis
+      if: ${{ inputs.redis == 'true' }}
+      uses: shogo82148/actions-setup-redis@v1
+
     - name: Start MySQL service
       shell: bash
       run: |
@@ -32,6 +40,9 @@ runs:
         sed -i 's/.*WP_HOME=.*/WP_HOME=http:\/\/localhost:8080/g' .env
         sed -i 's/.*DOMAIN_CURRENT_SITE=.*/DOMAIN_CURRENT_SITE=localhost:8080/g' .env
         sed -i 's/.*DB_HOST=.*/DB_HOST=localhost/g' .env
+        if [ "${{ inputs.redis }}" = "true" ]; then
+          sed -i 's/.*WP_REDIS_HOST=.*/WP_REDIS_HOST=127.0.0.1/g' .env
+        fi
 
     - name: Install WordPress
       if: ${{ inputs.multisite != 'true' }}
