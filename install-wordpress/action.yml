@@ -13,6 +13,10 @@ inputs:
     description: 'Start a Redis server and configure WP_REDIS_HOST in .env'
     required: false
     default: 'false'
+  env_vars:
+    description: 'Newline-separated KEY=VALUE pairs to set in .env (e.g. "WP_DOMAIN=localhost:8080")'
+    required: false
+    default: ''
 
 runs:
   using: 'composite'
@@ -43,6 +47,23 @@ runs:
         if [ "${{ inputs.redis }}" = "true" ]; then
           sed -i 's/.*WP_REDIS_HOST=.*/WP_REDIS_HOST=127.0.0.1/g' .env
         fi
+
+    - name: Apply extra env vars
+      if: ${{ inputs.env_vars != '' }}
+      shell: bash
+      env:
+        ENV_VARS: ${{ inputs.env_vars }}
+      run: |
+        while IFS= read -r line; do
+          [ -z "$line" ] && continue
+          KEY="${line%%=*}"
+          VALUE="${line#*=}"
+          if grep -q "^#\?.*${KEY}=" .env; then
+            sed -i "s|.*${KEY}=.*|${KEY}=${VALUE}|g" .env
+          else
+            echo "${KEY}=${VALUE}" >> .env
+          fi
+        done <<< "$ENV_VARS"
 
     - name: Install WordPress
       if: ${{ inputs.multisite != 'true' }}
