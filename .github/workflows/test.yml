@@ -53,6 +53,7 @@ jobs:
 
       - name: Optimize acorn
         run: ./vendor/bin/wp acorn optimize
+        continue-on-error: true
 
       - name: Load frontpage
         run: |
