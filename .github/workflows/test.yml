@@ -57,7 +57,7 @@ jobs:
 
       - name: Load frontpage
         run: |
-          RESPONSE=$(curl -sf http://localhost:8080/)
+          RESPONSE=$(curl -sSLf http://localhost:8080/)
           echo "$RESPONSE" > /tmp/frontpage.html
 
       - name: Verify frontpage content
