@@ -86,19 +86,36 @@ jobs:
       - name: Display debug response
         if: failure() || inputs.debug
         run: |
-          BODY=$(curl -s http://localhost:8080/)
-          # Acorn renders errors in a JS app with the error embedded as a markdown constant.
-          # Extract and print it so the error is visible in CI logs.
-          ERROR=$(echo "$BODY" | grep -o "const markdown = '[^']*'" | sed "s/const markdown = '//;s/'$//" | sed 's/\\n/\n/g' 2>/dev/null || true)
-          if [ -n "$ERROR" ]; then
-            echo "--- Acorn error page ---"
-            echo "$ERROR"
+          # Try JSON endpoint first — Ignition/Acorn returns structured errors with Accept: application/json
+          echo "--- JSON error response ---"
+          JSON=$(curl -s -H "Accept: application/json" http://localhost:8080/)
+          # Extract message and exception class from JSON if available
+          if echo "$JSON" | jq -e '.message' >/dev/null 2>&1; then
+            echo "$JSON" | jq -r '"Exception: \(.exception // "unknown")\nMessage: \(.message)\nFile: \(.file // "unknown"):\(.line // "?")\n\nTrace:\n\(.trace[:5][]? | "  \(.file // "?"):\(.line // "?") \(.class // "")\(.type // "")\(.function // "")()")"' 2>/dev/null || echo "$JSON" | jq '.' 2>/dev/null || echo "$JSON" | head -200
+          else
+            echo "(no JSON error response)"
           fi
-          # Also check for wp_die() error pages
-          echo "$BODY" | grep -o '<div class="wp-die-message">.*</div>' 2>/dev/null | sed 's/<[^>]*>//g' || true
-          # Show full verbose response as fallback
-          echo "--- Full response ---"
-          curl -v http://localhost:8080/ 2>&1 | head -100
+
+          echo ""
+          BODY=$(curl -s http://localhost:8080/)
+
+          # Check for wp_die() error pages
+          WPDIE=$(echo "$BODY" | grep -o '<div class="wp-die-message">.*</div>' 2>/dev/null | sed 's/<[^>]*>//g' || true)
+          if [ -n "$WPDIE" ]; then
+            echo "--- wp_die() error ---"
+            echo "$WPDIE"
+          fi
+
+          # Check for PHP fatal errors in plain text
+          FATAL=$(echo "$BODY" | grep -iE "Fatal error|Parse error|TypeError|Warning:" | head -10 || true)
+          if [ -n "$FATAL" ]; then
+            echo "--- PHP errors ---"
+            echo "$FATAL"
+          fi
+
+          # Show verbose response headers as fallback
+          echo "--- Response headers ---"
+          curl -sI http://localhost:8080/ 2>&1
 
       - name: Check if phpunit is available
         id: has-phpunit
