@@ -77,11 +77,15 @@ runs:
       shell: bash
       run: |
         # Step 1: Try composer update (stays within existing constraints).
+        # `-W` (--with-all-dependencies) lets composer also update packages that
+        # are LOCKED (not just those listed) when needed — required for cases
+        # like roots/wordpress-no-content, which is pinned to the same version
+        # as roots/wordpress; without -W neither can move.
         # Composite actions run with `set -e`, so capture the exit code via
         # `|| UPDATE_EXIT=$?` to keep the fallback alive on a non-zero exit.
-        echo "Trying: composer update ${{ inputs.packages }}"
+        echo "Trying: composer update -W ${{ inputs.packages }}"
         UPDATE_EXIT=0
-        composer update ${{ inputs.packages }} --no-interaction --no-scripts 2>&1 || UPDATE_EXIT=$?
+        composer update -W ${{ inputs.packages }} --no-interaction --no-scripts 2>&1 || UPDATE_EXIT=$?
         if [ "$UPDATE_EXIT" -ne 0 ]; then
           echo "::warning::composer update exited with code $UPDATE_EXIT, falling through to composer require"
         fi
@@ -92,10 +96,12 @@ runs:
           exit 0
         fi
 
-        # Step 2: Constraints blocked the update — try composer require (bumps to latest)
-        echo "No update within constraints, trying: composer require ${{ inputs.packages }}"
+        # Step 2: Constraints blocked the update — try composer require (bumps to latest).
+        # Same `-W` reasoning applies: a vuln in a transitively-pinned package
+        # needs the parent's lock to relax too.
+        echo "No update within constraints, trying: composer require -W ${{ inputs.packages }}"
         for PACKAGE in ${{ inputs.packages }}; do
-          composer require "$PACKAGE" --no-interaction --no-scripts 2>&1 || true
+          composer require -W "$PACKAGE" --no-interaction --no-scripts 2>&1 || true
         done
 
         if git diff --quiet composer.json composer.lock; then
