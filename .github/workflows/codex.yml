@@ -80,7 +80,7 @@ jobs:
 
             Environment:
             - DDEV is running. Use `ddev wp` for WP-CLI commands.
-            - Sites: https://steripolarnew.ddev.site (main), https://vet.steripolarnew.ddev.site (vet)
+            - Check the project's .env or wp-cli.yml for site URLs (DDEV rewrites them on import).
             - Playwright and Chromium are installed. Use `npx playwright` for browser automation.
             - For screenshots, use Playwright with `--ignore-https-errors` flag (DDEV uses self-signed certs).
             - Save artifacts (screenshots, exports) to the `artifacts/` directory (pre-created, auto-uploaded as workflow artifact).
