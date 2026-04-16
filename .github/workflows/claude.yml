@@ -272,9 +272,14 @@ jobs:
           CS="${{ steps.codespace.outputs.name }}"
           WORKSPACE="${{ steps.preview.outputs.workspace }}"
 
-          # Fetch the runner script from the shared actions repo
-          # Fetch the runner script from the shared actions repo
-          curl -sSf "https://raw.githubusercontent.com/generoi/github-actions/master/scripts/claude-runner.sh" \
+          # Fetch the runner script from the same ref as this workflow,
+          # so claude.yml@v1 pulls the v1 script (not whatever is on master).
+          # github.workflow_ref looks like "owner/repo/.github/workflows/file.yml@refs/heads/branch"
+          WORKFLOW_REF="${{ github.workflow_ref }}"
+          ACTIONS_REF="${WORKFLOW_REF##*@}"
+          ACTIONS_REF="${ACTIONS_REF#refs/heads/}"
+          ACTIONS_REF="${ACTIONS_REF#refs/tags/}"
+          curl -sSf "https://raw.githubusercontent.com/generoi/github-actions/${ACTIONS_REF}/scripts/claude-runner.sh" \
             -o /tmp/claude-runner.sh
           chmod +x /tmp/claude-runner.sh
 
@@ -285,6 +290,7 @@ jobs:
           # Execute with env vars
           gh codespace ssh -c "$CS" -- "\
             export PATH=\"\$HOME/.local/bin:\$PATH\" && \
+            export WORKSPACE='$WORKSPACE' && \
             export CODESPACE_TOKEN='${{ secrets.CODESPACE_TOKEN }}' && \
             export ANTHROPIC_API_KEY='${{ secrets.ANTHROPIC_API_KEY }}' && \
             export FIGMA_API_KEY='${{ secrets.FIGMA_API_KEY }}' && \

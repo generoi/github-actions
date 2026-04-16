@@ -44,11 +44,13 @@ runs:
       id: update
       shell: bash
       run: |
-        # Step 1: Try composer update (stays within existing constraints)
+        # Step 1: Try composer update (stays within existing constraints).
+        # Composite actions run with `set -e`, so capture the exit code via
+        # `|| UPDATE_EXIT=$?` to keep the fallback alive on a non-zero exit.
         echo "Trying: composer update ${{ inputs.packages }}"
-        composer update ${{ inputs.packages }} --no-interaction --no-scripts 2>&1
-        UPDATE_EXIT=$?
-        if [ $UPDATE_EXIT -ne 0 ]; then
+        UPDATE_EXIT=0
+        composer update ${{ inputs.packages }} --no-interaction --no-scripts 2>&1 || UPDATE_EXIT=$?
+        if [ "$UPDATE_EXIT" -ne 0 ]; then
           echo "::warning::composer update exited with code $UPDATE_EXIT, falling through to composer require"
         fi
 
