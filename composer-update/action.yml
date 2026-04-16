@@ -25,19 +25,51 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    - name: Check for existing PR
+    - name: Check for existing PR (dedup)
       id: check
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
+        PR_BODY: ${{ inputs.pr_body }}
       run: |
-        EXISTING=$(gh pr list --label "${{ inputs.pr_label }}" --state open --limit 1 --json number -q '.[0].number')
-        if [ -n "$EXISTING" ]; then
-          echo "Open PR #$EXISTING with label '${{ inputs.pr_label }}' exists, skipping"
-          echo "skip=true" >> "$GITHUB_OUTPUT"
-        else
+        # Dedup by label. If an open PR with this label exists we skip creating
+        # a duplicate. To avoid silently dropping NEW findings while a stale PR
+        # sits open, we compare the marker in PR_BODY (e.g. `<!-- vuln-update-set:
+        # foo,bar -->`) to the same marker in the open PR's body — if the package
+        # set differs, post a comment so reviewers see the new findings.
+        EXISTING=$(gh pr list --label "${{ inputs.pr_label }}" --state open --limit 1 --json number,body)
+        EXISTING_NUM=$(echo "$EXISTING" | jq -r '.[0].number // empty')
+
+        if [ -z "$EXISTING_NUM" ]; then
+          echo "No open PR with label '${{ inputs.pr_label }}' — will create one"
           echo "skip=false" >> "$GITHUB_OUTPUT"
+          exit 0
         fi
+
+        echo "Open PR #$EXISTING_NUM with label '${{ inputs.pr_label }}' exists — checking if findings differ"
+        EXISTING_BODY=$(echo "$EXISTING" | jq -r '.[0].body // ""')
+
+        # Extract `<!-- ${LABEL}-set: a,b,c -->` marker from both bodies.
+        # If markers match (or both empty), the findings are identical — skip silently.
+        MARKER_KEY="${{ inputs.pr_label }}-set"
+        EXISTING_SET=$(printf '%s' "$EXISTING_BODY" | grep -oE "$MARKER_KEY: [^ ]+ -->" | head -1 | sed -E "s/.*${MARKER_KEY}: ([^ ]+) -->.*/\1/")
+        NEW_SET=$(printf '%s' "$PR_BODY" | grep -oE "$MARKER_KEY: [^ ]+ -->" | head -1 | sed -E "s/.*${MARKER_KEY}: ([^ ]+) -->.*/\1/")
+
+        echo "Existing set: ${EXISTING_SET:-<none>}"
+        echo "New set:      ${NEW_SET:-<none>}"
+
+        if [ -n "$NEW_SET" ] && [ "$NEW_SET" = "$EXISTING_SET" ]; then
+          echo "Findings unchanged since PR #$EXISTING_NUM was opened — skipping silently"
+        else
+          echo "Findings differ — posting comment to PR #$EXISTING_NUM"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          {
+            printf '## Updated findings — [run #%s](%s)\n\n' "${{ github.run_number }}" "$RUN_URL"
+            printf '%s\n' "$PR_BODY"
+          } > /tmp/composer-update-comment.md
+          gh pr comment "$EXISTING_NUM" --body-file /tmp/composer-update-comment.md
+        fi
+        echo "skip=true" >> "$GITHUB_OUTPUT"
 
     - name: Update packages
       if: steps.check.outputs.skip != 'true'
@@ -79,13 +111,26 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
+        PR_BODY: ${{ inputs.pr_body }}
+        PACKAGES: ${{ inputs.packages }}
       run: |
         BRANCH="${{ inputs.branch_prefix }}-$(date +%Y%m%d-%H%M%S)"
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git checkout -b "$BRANCH"
         git add composer.json composer.lock
-        git commit -m "${{ inputs.pr_title }}"
+
+        # Commit message: title in subject, package list in body so `git blame`
+        # on composer.lock answers "why did this version change?".
+        {
+          printf '%s\n\n' "${{ inputs.pr_title }}"
+          echo "Updated packages:"
+          for pkg in $PACKAGES; do
+            echo "- $pkg"
+          done
+        } > /tmp/composer-update-commit.txt
+        git commit -F /tmp/composer-update-commit.txt
+
         git push origin "$BRANCH"
 
         # Ensure the dedup label exists on the repo (idempotent — silently
@@ -95,7 +140,10 @@ runs:
           --description "Auto-generated dependency update PR" \
           2>/dev/null || true
 
+        # Use --body-file so backticks / $() / etc. in markdown stay literal
+        # (interpolating ${{ inputs.pr_body }} into a shell arg would re-parse them).
+        printf '%s' "$PR_BODY" > /tmp/composer-update-pr-body.md
         gh pr create \
           --title "${{ inputs.pr_title }}" \
           --label "${{ inputs.pr_label }}" \
-          --body "${{ inputs.pr_body }}"
+          --body-file /tmp/composer-update-pr-body.md
