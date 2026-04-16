@@ -1,15 +1,10 @@
 name: 'Composer Update Packages'
-description: 'Update specific Composer packages and create a PR. Supports both composer update (lock only) and composer require (constraint bump).'
+description: 'Update specific Composer packages and create a PR'
 
 inputs:
   packages:
-    required: false
-    default: ''
-    description: 'Space-separated package names for composer update (lock file only)'
-  require_args:
-    required: false
-    default: ''
-    description: 'Space-separated package:version args for composer require (bumps constraints)'
+    required: true
+    description: 'Space-separated list of Composer package names to update'
   pr_title:
     required: false
     default: 'Update packages'
@@ -49,27 +44,11 @@ runs:
       id: update
       shell: bash
       run: |
-        # Prefer composer require (bumps constraints to minimum fix version)
-        # Fall back to composer update (only updates lock file within existing constraints)
-        if [ -n "${{ inputs.require_args }}" ]; then
-          echo "Running: composer require ${{ inputs.require_args }}"
-          composer require ${{ inputs.require_args }} --no-interaction --no-scripts 2>&1 || {
-            echo "composer require failed, falling back to composer update"
-            if [ -n "${{ inputs.packages }}" ]; then
-              composer update ${{ inputs.packages }} --no-interaction --no-scripts 2>&1 || true
-            fi
-          }
-        elif [ -n "${{ inputs.packages }}" ]; then
-          echo "Running: composer update ${{ inputs.packages }}"
-          composer update ${{ inputs.packages }} --no-interaction --no-scripts 2>&1 || true
-        else
-          echo "No packages specified"
-          echo "changed=false" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
+        echo "Updating: ${{ inputs.packages }}"
+        composer update ${{ inputs.packages }} --no-interaction --no-scripts 2>&1 || true
 
         if git diff --quiet composer.json composer.lock; then
-          echo "No updates available"
+          echo "No updates available (version constraint may prevent update)"
           echo "changed=false" >> "$GITHUB_OUTPUT"
         else
           echo "changed=true" >> "$GITHUB_OUTPUT"
