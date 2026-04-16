@@ -1,0 +1,77 @@
+name: 'Composer Update Packages'
+description: 'Update specific Composer packages and create a PR'
+
+inputs:
+  packages:
+    required: true
+    description: 'Space-separated list of Composer package names to update'
+  pr_title:
+    required: false
+    default: 'Update packages'
+    description: 'PR title'
+  pr_body:
+    required: false
+    default: ''
+    description: 'PR body (markdown)'
+  pr_label:
+    required: false
+    default: 'dependencies'
+    description: 'Label for the PR (used for dedup)'
+  branch_prefix:
+    required: false
+    default: 'fix/update'
+    description: 'Branch name prefix'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check for existing PR
+      id: check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        EXISTING=$(gh pr list --label "${{ inputs.pr_label }}" --state open --limit 1 --json number -q '.[0].number')
+        if [ -n "$EXISTING" ]; then
+          echo "Open PR #$EXISTING with label '${{ inputs.pr_label }}' exists, skipping"
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Update packages
+      if: steps.check.outputs.skip != 'true'
+      id: update
+      shell: bash
+      run: |
+        echo "Updating: ${{ inputs.packages }}"
+        composer update ${{ inputs.packages }} --no-interaction --no-scripts 2>&1 || true
+
+        if git diff --quiet composer.lock; then
+          echo "No updates available"
+          echo "changed=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Create PR
+      if: steps.check.outputs.skip != 'true' && steps.update.outputs.changed == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        BRANCH="${{ inputs.branch_prefix }}-$(date +%Y%m%d)"
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git checkout -b "$BRANCH"
+        git add composer.json composer.lock
+        git commit -m "${{ inputs.pr_title }}
+
+        Packages:
+        $(echo "${{ inputs.packages }}" | tr ' ' '\n' | sed 's/^/- /')"
+        git push origin "$BRANCH"
+
+        gh pr create \
+          --title "${{ inputs.pr_title }}" \
+          --label "${{ inputs.pr_label }}" \
+          --body "${{ inputs.pr_body }}"
