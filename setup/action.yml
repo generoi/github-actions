@@ -6,6 +6,10 @@ inputs:
     required: true
   packagist_github_token:
     required: true
+  yoast_license_token:
+    description: 'Optional Yoast Premium license token for my.yoast.com Composer repository'
+    required: false
+    default: ''
 
 runs:
   using: 'composite'
@@ -35,6 +39,14 @@ runs:
         php-version: ${{ env.PHP_VERSION }}
       env:
         COMPOSER_TOKEN: ${{ inputs.packagist_github_token }}
+
+    - name: Authenticate with Yoast Premium Composer repository
+      if: inputs.yoast_license_token != ''
+      shell: bash
+      env:
+        YOAST_TOKEN: ${{ inputs.yoast_license_token }}
+      run: |
+        composer config -g http-basic.my.yoast.com token "$YOAST_TOKEN"
 
     - name: Get Composer Cache Directory
       id: composer-cache

@@ -22,6 +22,8 @@ on:
         required: true
       PACKAGIST_GITHUB_TOKEN:
         required: true
+      YOAST_LICENSE_TOKEN:
+        required: false
 
 jobs:
   build_deploy:
@@ -42,6 +44,7 @@ jobs:
         with:
           npm_fontawesome_auth_token: ${{ secrets.NPM_FONTAWESOME_AUTH_TOKEN }}
           packagist_github_token: ${{ secrets.PACKAGIST_GITHUB_TOKEN }}
+          yoast_license_token: ${{ secrets.YOAST_LICENSE_TOKEN }}
 
       - name: Install dependencies for testing
         run: |
