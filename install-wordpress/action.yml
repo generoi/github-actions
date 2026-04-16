@@ -23,7 +23,7 @@ runs:
   steps:
     - name: Start Redis
       if: ${{ inputs.redis == 'true' }}
-      uses: shogo82148/actions-setup-redis@v1
+      uses: shogo82148/actions-setup-redis@2f3253b148c73d7a0682eae73e862b777a4fa74e # v1.49.0
 
     - name: Start MySQL service
       shell: bash

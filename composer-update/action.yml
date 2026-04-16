@@ -46,7 +46,11 @@ runs:
       run: |
         # Step 1: Try composer update (stays within existing constraints)
         echo "Trying: composer update ${{ inputs.packages }}"
-        composer update ${{ inputs.packages }} --no-interaction --no-scripts 2>&1 || true
+        composer update ${{ inputs.packages }} --no-interaction --no-scripts 2>&1
+        UPDATE_EXIT=$?
+        if [ $UPDATE_EXIT -ne 0 ]; then
+          echo "::warning::composer update exited with code $UPDATE_EXIT, falling through to composer require"
+        fi
 
         if ! git diff --quiet composer.json composer.lock; then
           echo "Updated within existing constraints"
@@ -74,7 +78,7 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        BRANCH="${{ inputs.branch_prefix }}-$(date +%Y%m%d)"
+        BRANCH="${{ inputs.branch_prefix }}-$(date +%Y%m%d-%H%M%S)"
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git checkout -b "$BRANCH"
