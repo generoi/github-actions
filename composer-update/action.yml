@@ -88,6 +88,13 @@ runs:
         git commit -m "${{ inputs.pr_title }}"
         git push origin "$BRANCH"
 
+        # Ensure the dedup label exists on the repo (idempotent — silently
+        # no-ops if it already exists). Avoids needing per-repo setup.
+        gh label create "${{ inputs.pr_label }}" \
+          --color FFAA00 \
+          --description "Auto-generated dependency update PR" \
+          2>/dev/null || true
+
         gh pr create \
           --title "${{ inputs.pr_title }}" \
           --label "${{ inputs.pr_label }}" \
