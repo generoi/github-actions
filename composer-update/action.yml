@@ -128,10 +128,13 @@ runs:
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
 
-        # Override the remote URL with the app token embedded. The checkout
-        # action's credential files (includeIf + extraheader) conflict with
-        # any other auth method — setting the remote URL directly is the only
-        # reliable way to push with a different token.
+        # Remove actions/checkout's credential config — it sets includeIf
+        # entries and extraheader with the GITHUB_TOKEN which overrides any
+        # other auth method we try to use. Must be cleared before pushing.
+        for key in $(git config --local --name-only --get-regexp '^includeIf\.gitdir:' 2>/dev/null); do
+          git config --local --unset-all "$key" 2>/dev/null || true
+        done
+        git config --local --unset-all 'http.https://github.com/.extraheader' 2>/dev/null || true
         git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
 
         git checkout -b "$BRANCH"
