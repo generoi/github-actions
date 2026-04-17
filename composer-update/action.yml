@@ -116,20 +116,36 @@ runs:
 
         # Build a table of package versions that changed.
         # Use `git show HEAD:composer.lock` for the BEFORE state — guarantees
-        # we get the committed (pre-update) state regardless of step ordering
-        # or any earlier composer install that might have touched the file.
+        # we get the committed (pre-update) state regardless of step ordering.
         JQ_VERSIONS='[(.packages + ."packages-dev")[] | {name, version}] | from_entries'
         git show HEAD:composer.lock | jq "$JQ_VERSIONS" > /tmp/composer-update-before.json
         jq "$JQ_VERSIONS" composer.lock > /tmp/composer-update-after.json
 
         echo "Before snapshot: $(jq 'length' /tmp/composer-update-before.json) packages"
         echo "After snapshot:  $(jq 'length' /tmp/composer-update-after.json) packages"
-        echo "Lock file git diff summary:"
-        git diff --stat composer.lock || true
-        echo "Version diff (raw):"
-        diff <(jq -S . /tmp/composer-update-before.json) \
-             <(jq -S . /tmp/composer-update-after.json) \
-          | head -40 || true
+
+        # Count packages with actual version changes (or added/removed).
+        # If zero, the composer.lock diff is metadata-only (refreshed dist
+        # references, content-hash) and doesn't actually fix any vulnerability
+        # — skip PR creation rather than opening noise.
+        VERSION_DIFF_COUNT=$(jq -r --slurpfile after /tmp/composer-update-after.json '
+          ([to_entries[]
+            | ($after[0][.key] // null) as $n
+            | select($n != null and $n != .value)
+          ] | length)
+          + ([$after[0] | keys[]] - [keys[]] | length)
+          + ([keys[]] - [$after[0] | keys[]] | length)
+        ' /tmp/composer-update-before.json)
+
+        echo "Version changes detected: $VERSION_DIFF_COUNT"
+
+        if [ "$VERSION_DIFF_COUNT" -eq 0 ]; then
+          echo "composer.lock changed but no package versions moved — skipping PR"
+          echo "changed=false" >> "$GITHUB_OUTPUT"
+          # Reset lock to avoid leaving metadata-only changes staged
+          git checkout -- composer.json composer.lock 2>/dev/null || true
+          exit 0
+        fi
 
         {
           echo ""
