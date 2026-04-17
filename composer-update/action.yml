@@ -122,10 +122,14 @@ runs:
         git show HEAD:composer.lock | jq "$JQ_VERSIONS" > /tmp/composer-update-before.json
         jq "$JQ_VERSIONS" composer.lock > /tmp/composer-update-after.json
 
-        echo "Before snapshot:"
-        jq 'length' /tmp/composer-update-before.json
-        echo "After snapshot:"
-        jq 'length' /tmp/composer-update-after.json
+        echo "Before snapshot: $(jq 'length' /tmp/composer-update-before.json) packages"
+        echo "After snapshot:  $(jq 'length' /tmp/composer-update-after.json) packages"
+        echo "Lock file git diff summary:"
+        git diff --stat composer.lock || true
+        echo "Version diff (raw):"
+        diff <(jq -S . /tmp/composer-update-before.json) \
+             <(jq -S . /tmp/composer-update-after.json) \
+          | head -40 || true
 
         {
           echo ""
