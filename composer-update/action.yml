@@ -80,12 +80,6 @@ runs:
       id: update
       shell: bash
       run: |
-        # Snapshot composer.lock versions for ALL packages before updating.
-        # After the update we'll compute a diff to show reviewers exactly what
-        # moved (transitive deps included via `-W`, not just the named targets).
-        jq '[(.packages + ."packages-dev")[] | {name, version}] | from_entries' \
-          composer.lock > /tmp/composer-update-before.json
-
         # Step 1: Try composer update (stays within existing constraints).
         # `-W` (--with-all-dependencies) lets composer also update packages that
         # are LOCKED (not just those listed) when needed — required for cases
@@ -120,9 +114,18 @@ runs:
           echo "changed=true" >> "$GITHUB_OUTPUT"
         fi
 
-        # Snapshot the new versions and build a markdown table of what moved.
-        jq '[(.packages + ."packages-dev")[] | {name, version}] | from_entries' \
-          composer.lock > /tmp/composer-update-after.json
+        # Build a table of package versions that changed.
+        # Use `git show HEAD:composer.lock` for the BEFORE state — guarantees
+        # we get the committed (pre-update) state regardless of step ordering
+        # or any earlier composer install that might have touched the file.
+        JQ_VERSIONS='[(.packages + ."packages-dev")[] | {name, version}] | from_entries'
+        git show HEAD:composer.lock | jq "$JQ_VERSIONS" > /tmp/composer-update-before.json
+        jq "$JQ_VERSIONS" composer.lock > /tmp/composer-update-after.json
+
+        echo "Before snapshot:"
+        jq 'length' /tmp/composer-update-before.json
+        echo "After snapshot:"
+        jq 'length' /tmp/composer-update-after.json
 
         {
           echo ""
@@ -131,27 +134,31 @@ runs:
           echo "| Package | From | To |"
           echo "|---|---|---|"
           jq -r --slurpfile after /tmp/composer-update-after.json '
-            to_entries[] as $before
-            | $after[0][$before.key] as $new
-            | select($new != null and $new != $before.value)
-            | "| `\($before.key)` | `\($before.value)` | `\($new)` |"
+            to_entries[] as $b
+            | ($after[0][$b.key] // null) as $n
+            | select($n != null and $n != $b.value)
+            | "| `\($b.key)` | `\($b.value)` | `\($n)` |"
           ' /tmp/composer-update-before.json | sort
-          # Also surface packages that were added or removed
+          # New packages (present in after but not before)
           jq -r --slurpfile after /tmp/composer-update-after.json '
-            ($after[0] | to_entries | map(.key)) - (to_entries | map(.key)) | .[]
+            [$after[0] | keys[]] - [keys[]] | .[]
           ' /tmp/composer-update-before.json | while read -r pkg; do
             [ -z "$pkg" ] && continue
             v=$(jq -r --arg k "$pkg" '.[$k]' /tmp/composer-update-after.json)
             echo "| \`$pkg\` | _(new)_ | \`$v\` |"
           done
+          # Removed packages (present in before but not after)
           jq -r --slurpfile after /tmp/composer-update-after.json '
-            (to_entries | map(.key)) - ($after[0] | to_entries | map(.key)) | .[]
+            [keys[]] - [$after[0] | keys[]] | .[]
           ' /tmp/composer-update-before.json | while read -r pkg; do
             [ -z "$pkg" ] && continue
             v=$(jq -r --arg k "$pkg" '.[$k]' /tmp/composer-update-before.json)
             echo "| \`$pkg\` | \`$v\` | _(removed)_ |"
           done
         } > /tmp/composer-update-versions.md
+
+        echo "Version changes table:"
+        cat /tmp/composer-update-versions.md
 
     - name: Create PR
       if: steps.check.outputs.skip != 'true' && steps.update.outputs.changed == 'true'
