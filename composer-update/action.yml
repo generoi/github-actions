@@ -128,9 +128,11 @@ runs:
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
 
-        # Configure git to use the token for push (required when using a
-        # GitHub App token instead of the default GITHUB_TOKEN).
-        git config http.https://github.com/.extraheader "Authorization: basic $(echo -n "x-access-token:${GH_TOKEN}" | base64)"
+        # Replace checkout-action's credentials with the app token. The checkout
+        # action sets includeIf-based credential files — adding a second
+        # extraheader causes "Duplicate header: Authorization". Using insteadOf
+        # rewrites the URL to embed the token, bypassing header-based auth.
+        git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
 
         git checkout -b "$BRANCH"
         git add composer.json composer.lock
