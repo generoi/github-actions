@@ -128,11 +128,11 @@ runs:
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
 
-        # Replace checkout-action's credentials with the app token. The checkout
-        # action sets includeIf-based credential files — adding a second
-        # extraheader causes "Duplicate header: Authorization". Using insteadOf
-        # rewrites the URL to embed the token, bypassing header-based auth.
-        git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+        # Override the remote URL with the app token embedded. The checkout
+        # action's credential files (includeIf + extraheader) conflict with
+        # any other auth method — setting the remote URL directly is the only
+        # reliable way to push with a different token.
+        git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
 
         git checkout -b "$BRANCH"
         git add composer.json composer.lock
