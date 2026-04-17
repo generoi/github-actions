@@ -126,8 +126,11 @@ runs:
 
         echo "Before snapshot: $(jq 'length' /tmp/composer-update-before.json) packages"
         echo "After snapshot:  $(jq 'length' /tmp/composer-update-after.json) packages"
-        echo "Sample before/after for first changed package:"
-        diff /tmp/composer-update-before.json /tmp/composer-update-after.json | head -5 || true
+        echo "md5 before.lock: $(md5sum /tmp/composer-update-before.lock | awk '{print $1}')"
+        echo "md5 current:     $(md5sum composer.lock | awk '{print $1}')"
+        echo "git show HEAD md5: $(git show HEAD:composer.lock 2>/dev/null | md5sum | awk '{print $1}')"
+        echo "jq version-diff content (first 3 lines):"
+        diff /tmp/composer-update-before.json /tmp/composer-update-after.json | head -3 || true
 
         # Count packages with actual version changes (or added/removed).
         # If zero, the composer.lock diff is metadata-only (refreshed dist
