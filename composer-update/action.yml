@@ -120,26 +120,15 @@ runs:
 
         # Build a version-diff table from the before tempfile (saved above)
         # vs the post-update composer.lock.
-        JQ_VERSIONS='[(.packages + ."packages-dev")[] | {name, version}] | from_entries'
+        # from_entries requires {key, value} — it silently drops other field
+        # names like `version`, producing a map of {pkg: null} regardless of
+        # actual version. Map to {key, value} explicitly.
+        JQ_VERSIONS='[(.packages + ."packages-dev")[] | {key: .name, value: .version}] | from_entries'
         jq "$JQ_VERSIONS" /tmp/composer-update-before.lock > /tmp/composer-update-before.json
         jq "$JQ_VERSIONS" composer.lock > /tmp/composer-update-after.json
 
         echo "Before snapshot: $(jq 'length' /tmp/composer-update-before.json) packages"
         echo "After snapshot:  $(jq 'length' /tmp/composer-update-after.json) packages"
-        echo "md5 before.lock: $(md5sum /tmp/composer-update-before.lock | awk '{print $1}')"
-        echo "md5 current:     $(md5sum composer.lock | awk '{print $1}')"
-        echo "git show HEAD md5: $(git show HEAD:composer.lock 2>/dev/null | md5sum | awk '{print $1}')"
-        echo "jq version-diff content (first 3 lines):"
-        diff /tmp/composer-update-before.json /tmp/composer-update-after.json | head -3 || true
-        echo ""
-        echo "DEBUG: composer.lock top-level keys:"
-        jq -r 'keys | join(", ")' composer.lock
-        echo "DEBUG: composer/composer entry in before:"
-        jq '(.packages + ."packages-dev") | map(select(.name == "composer/composer")) | .[0] | {name, version}' /tmp/composer-update-before.lock
-        echo "DEBUG: composer/composer entry in current:"
-        jq '(.packages + ."packages-dev") | map(select(.name == "composer/composer")) | .[0] | {name, version}' composer.lock
-        echo "DEBUG: sample raw diff on lock files (first 20 lines where versions differ):"
-        diff /tmp/composer-update-before.lock composer.lock | grep -E '^[<>].*"version"' | head -20 || true
 
         # Count packages with actual version changes (or added/removed).
         # If zero, the composer.lock diff is metadata-only (refreshed dist
