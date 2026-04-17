@@ -131,6 +131,15 @@ runs:
         echo "git show HEAD md5: $(git show HEAD:composer.lock 2>/dev/null | md5sum | awk '{print $1}')"
         echo "jq version-diff content (first 3 lines):"
         diff /tmp/composer-update-before.json /tmp/composer-update-after.json | head -3 || true
+        echo ""
+        echo "DEBUG: composer.lock top-level keys:"
+        jq -r 'keys | join(", ")' composer.lock
+        echo "DEBUG: composer/composer entry in before:"
+        jq '(.packages + ."packages-dev") | map(select(.name == "composer/composer")) | .[0] | {name, version}' /tmp/composer-update-before.lock
+        echo "DEBUG: composer/composer entry in current:"
+        jq '(.packages + ."packages-dev") | map(select(.name == "composer/composer")) | .[0] | {name, version}' composer.lock
+        echo "DEBUG: sample raw diff on lock files (first 20 lines where versions differ):"
+        diff /tmp/composer-update-before.lock composer.lock | grep -E '^[<>].*"version"' | head -20 || true
 
         # Count packages with actual version changes (or added/removed).
         # If zero, the composer.lock diff is metadata-only (refreshed dist
