@@ -80,6 +80,10 @@ runs:
       id: update
       shell: bash
       run: |
+        # Snapshot composer.lock to a tempfile BEFORE any composer ops run,
+        # so we have an untouched copy for the before/after version diff.
+        cp composer.lock /tmp/composer-update-before.lock
+
         # Step 1: Try composer update (stays within existing constraints).
         # `-W` (--with-all-dependencies) lets composer also update packages that
         # are LOCKED (not just those listed) when needed — required for cases
@@ -114,15 +118,16 @@ runs:
           echo "changed=true" >> "$GITHUB_OUTPUT"
         fi
 
-        # Build a table of package versions that changed.
-        # Use `git show HEAD:composer.lock` for the BEFORE state — guarantees
-        # we get the committed (pre-update) state regardless of step ordering.
+        # Build a version-diff table from the before tempfile (saved above)
+        # vs the post-update composer.lock.
         JQ_VERSIONS='[(.packages + ."packages-dev")[] | {name, version}] | from_entries'
-        git show HEAD:composer.lock | jq "$JQ_VERSIONS" > /tmp/composer-update-before.json
+        jq "$JQ_VERSIONS" /tmp/composer-update-before.lock > /tmp/composer-update-before.json
         jq "$JQ_VERSIONS" composer.lock > /tmp/composer-update-after.json
 
         echo "Before snapshot: $(jq 'length' /tmp/composer-update-before.json) packages"
         echo "After snapshot:  $(jq 'length' /tmp/composer-update-after.json) packages"
+        echo "Sample before/after for first changed package:"
+        diff /tmp/composer-update-before.json /tmp/composer-update-after.json | head -5 || true
 
         # Count packages with actual version changes (or added/removed).
         # If zero, the composer.lock diff is metadata-only (refreshed dist
