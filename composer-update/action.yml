@@ -160,8 +160,7 @@ runs:
           --description "Auto-generated dependency update PR" \
           2>/dev/null || true
 
-        # Use --body-file so backticks / $() / etc. in markdown stay literal
-        # (interpolating ${{ inputs.pr_body }} into a shell arg would re-parse them).
+        # Use --body-file so backticks / $() / etc. in markdown stay literal.
         printf '%s' "$PR_BODY" > /tmp/composer-update-pr-body.md
         gh pr create \
           --title "${{ inputs.pr_title }}" \
