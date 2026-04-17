@@ -5,6 +5,10 @@ inputs:
   packages:
     required: true
     description: 'Space-separated list of Composer package names to update'
+  token:
+    required: false
+    default: ''
+    description: 'GitHub token with push + PR permissions. Defaults to github.token. Pass a GitHub App token for cross-repo write access.'
   pr_title:
     required: false
     default: 'Update packages'
@@ -29,7 +33,7 @@ runs:
       id: check
       shell: bash
       env:
-        GH_TOKEN: ${{ github.token }}
+        GH_TOKEN: ${{ inputs.token || github.token }}
         PR_BODY: ${{ inputs.pr_body }}
       run: |
         # Dedup by label. If an open PR with this label exists we skip creating
@@ -116,13 +120,18 @@ runs:
       if: steps.check.outputs.skip != 'true' && steps.update.outputs.changed == 'true'
       shell: bash
       env:
-        GH_TOKEN: ${{ github.token }}
+        GH_TOKEN: ${{ inputs.token || github.token }}
         PR_BODY: ${{ inputs.pr_body }}
         PACKAGES: ${{ inputs.packages }}
       run: |
         BRANCH="${{ inputs.branch_prefix }}-$(date +%Y%m%d-%H%M%S)"
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
+
+        # Configure git to use the token for push (required when using a
+        # GitHub App token instead of the default GITHUB_TOKEN).
+        git config http.https://github.com/.extraheader "Authorization: basic $(echo -n "x-access-token:${GH_TOKEN}" | base64)"
+
         git checkout -b "$BRANCH"
         git add composer.json composer.lock
 
