@@ -80,6 +80,12 @@ runs:
       id: update
       shell: bash
       run: |
+        # Snapshot composer.lock versions for ALL packages before updating.
+        # After the update we'll compute a diff to show reviewers exactly what
+        # moved (transitive deps included via `-W`, not just the named targets).
+        jq '[(.packages + ."packages-dev")[] | {name, version}] | from_entries' \
+          composer.lock > /tmp/composer-update-before.json
+
         # Step 1: Try composer update (stays within existing constraints).
         # `-W` (--with-all-dependencies) lets composer also update packages that
         # are LOCKED (not just those listed) when needed — required for cases
@@ -97,24 +103,55 @@ runs:
         if ! git diff --quiet composer.json composer.lock; then
           echo "Updated within existing constraints"
           echo "changed=true" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
-
-        # Step 2: Constraints blocked the update — try composer require (bumps to latest).
-        # Same `-W` reasoning applies: a vuln in a transitively-pinned package
-        # needs the parent's lock to relax too.
-        echo "No update within constraints, trying: composer require -W ${{ inputs.packages }}"
-        for PACKAGE in ${{ inputs.packages }}; do
-          composer require -W "$PACKAGE" --no-interaction --no-scripts 2>&1 || true
-        done
-
-        if git diff --quiet composer.json composer.lock; then
-          echo "No updates available"
-          echo "changed=false" >> "$GITHUB_OUTPUT"
         else
+          # Step 2: Constraints blocked the update — try composer require
+          # (bumps to latest). Same `-W` reasoning applies.
+          echo "No update within constraints, trying: composer require -W ${{ inputs.packages }}"
+          for PACKAGE in ${{ inputs.packages }}; do
+            composer require -W "$PACKAGE" --no-interaction --no-scripts 2>&1 || true
+          done
+
+          if git diff --quiet composer.json composer.lock; then
+            echo "No updates available"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           echo "Updated with constraint bump"
           echo "changed=true" >> "$GITHUB_OUTPUT"
         fi
+
+        # Snapshot the new versions and build a markdown table of what moved.
+        jq '[(.packages + ."packages-dev")[] | {name, version}] | from_entries' \
+          composer.lock > /tmp/composer-update-after.json
+
+        {
+          echo ""
+          echo "## Version changes"
+          echo ""
+          echo "| Package | From | To |"
+          echo "|---|---|---|"
+          jq -r --slurpfile after /tmp/composer-update-after.json '
+            to_entries[] as $before
+            | $after[0][$before.key] as $new
+            | select($new != null and $new != $before.value)
+            | "| `\($before.key)` | `\($before.value)` | `\($new)` |"
+          ' /tmp/composer-update-before.json | sort
+          # Also surface packages that were added or removed
+          jq -r --slurpfile after /tmp/composer-update-after.json '
+            ($after[0] | to_entries | map(.key)) - (to_entries | map(.key)) | .[]
+          ' /tmp/composer-update-before.json | while read -r pkg; do
+            [ -z "$pkg" ] && continue
+            v=$(jq -r --arg k "$pkg" '.[$k]' /tmp/composer-update-after.json)
+            echo "| \`$pkg\` | _(new)_ | \`$v\` |"
+          done
+          jq -r --slurpfile after /tmp/composer-update-after.json '
+            (to_entries | map(.key)) - ($after[0] | to_entries | map(.key)) | .[]
+          ' /tmp/composer-update-before.json | while read -r pkg; do
+            [ -z "$pkg" ] && continue
+            v=$(jq -r --arg k "$pkg" '.[$k]' /tmp/composer-update-before.json)
+            echo "| \`$pkg\` | \`$v\` | _(removed)_ |"
+          done
+        } > /tmp/composer-update-versions.md
 
     - name: Create PR
       if: steps.check.outputs.skip != 'true' && steps.update.outputs.changed == 'true'
@@ -161,7 +198,13 @@ runs:
           2>/dev/null || true
 
         # Use --body-file so backticks / $() / etc. in markdown stay literal.
-        printf '%s' "$PR_BODY" > /tmp/composer-update-pr-body.md
+        # Append the Version changes table built by the Update step (if any).
+        {
+          printf '%s' "$PR_BODY"
+          if [ -s /tmp/composer-update-versions.md ]; then
+            cat /tmp/composer-update-versions.md
+          fi
+        } > /tmp/composer-update-pr-body.md
         gh pr create \
           --title "${{ inputs.pr_title }}" \
           --label "${{ inputs.pr_label }}" \
