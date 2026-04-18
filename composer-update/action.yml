@@ -26,6 +26,11 @@ inputs:
     default: 'fix/update'
     description: 'Branch name prefix'
 
+outputs:
+  pr_url:
+    description: 'URL of the open PR — newly created, or the existing one hit by dedup. Empty if no PR was opened or touched.'
+    value: ${{ steps.create.outputs.pr_url || steps.check.outputs.pr_url }}
+
 runs:
   using: 'composite'
   steps:
@@ -41,7 +46,7 @@ runs:
         # sits open, we compare the marker in PR_BODY (e.g. `<!-- vuln-update-set:
         # foo,bar -->`) to the same marker in the open PR's body — if the package
         # set differs, post a comment so reviewers see the new findings.
-        EXISTING=$(gh pr list --label "${{ inputs.pr_label }}" --state open --limit 1 --json number,body)
+        EXISTING=$(gh pr list --label "${{ inputs.pr_label }}" --state open --limit 1 --json number,url,body)
         EXISTING_NUM=$(echo "$EXISTING" | jq -r '.[0].number // empty')
 
         if [ -z "$EXISTING_NUM" ]; then
@@ -49,6 +54,10 @@ runs:
           echo "skip=false" >> "$GITHUB_OUTPUT"
           exit 0
         fi
+
+        # Expose the existing PR URL so callers can link to it even on silent dedup.
+        EXISTING_URL=$(echo "$EXISTING" | jq -r '.[0].url // empty')
+        echo "pr_url=$EXISTING_URL" >> "$GITHUB_OUTPUT"
 
         echo "Open PR #$EXISTING_NUM with label '${{ inputs.pr_label }}' exists — checking if findings differ"
         EXISTING_BODY=$(echo "$EXISTING" | jq -r '.[0].body // ""')
@@ -188,6 +197,7 @@ runs:
 
     - name: Create PR
       if: steps.check.outputs.skip != 'true' && steps.update.outputs.changed == 'true'
+      id: create
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token || github.token }}
@@ -238,7 +248,9 @@ runs:
             cat /tmp/composer-update-versions.md
           fi
         } > /tmp/composer-update-pr-body.md
-        gh pr create \
+        PR_URL=$(gh pr create \
           --title "${{ inputs.pr_title }}" \
           --label "${{ inputs.pr_label }}" \
-          --body-file /tmp/composer-update-pr-body.md
+          --body-file /tmp/composer-update-pr-body.md)
+        echo "Created PR: $PR_URL"
+        echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
