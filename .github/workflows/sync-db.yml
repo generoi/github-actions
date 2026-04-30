@@ -23,12 +23,12 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: generoi/github-actions/ssh-agent@v1
+      - uses: generoi/github-actions/ssh-agent@v2
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
 
       - name: Setup project
-        uses: generoi/github-actions/setup@v1
+        uses: generoi/github-actions/setup@v2
         with:
           npm_fontawesome_auth_token: ${{ secrets.NPM_FONTAWESOME_AUTH_TOKEN }}
           packagist_github_token: ${{ secrets.PACKAGIST_GITHUB_TOKEN }}
@@ -40,7 +40,7 @@ jobs:
         run: ssh-keyscan -p $(./vendor/bin/robo config env.@production.port || echo 22) $(./vendor/bin/robo config env.@production.host) >> ~/.ssh/known_hosts
 
       - name: Setup DDEV
-        uses: generoi/github-actions/setup-ddev@v1
+        uses: generoi/github-actions/setup-ddev@v2
 
       - name: Pull database from production
         run: ./vendor/bin/robo db:pull @production
@@ -61,7 +61,7 @@ jobs:
             -pass env:DB_ARTIFACT_KEY
 
       - name: Upload sanitized DB artifact
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: sanitized-db
           path: .github/fixtures/sanitized-db.sql.gz.enc
