@@ -44,6 +44,16 @@ jobs:
           packagist_github_token: ${{ secrets.PACKAGIST_GITHUB_TOKEN }}
           yoast_license_token: ${{ secrets.YOAST_LICENSE_TOKEN }}
 
+      - name: Install npm packages through Socket Firewall
+        # Pre-install via `sfw` so Socket can block known-malicious packages
+        # before they hit disk. The subsequent `npm install` invoked by the
+        # composer build script becomes a no-op against this populated cache,
+        # except for any net-new packages it pulls — those are the residual
+        # gap. Per-project composer scripts can close the gap by switching
+        # their own `npm install` to `sfw npm install`.
+        if: hashFiles('package-lock.json') != ''
+        run: sfw npm ci --ignore-scripts
+
       - name: Install development packages
         run: composer install:development
 
