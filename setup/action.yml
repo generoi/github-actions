@@ -37,6 +37,9 @@ runs:
       uses: shivammathur/setup-php@accd6127cb78bee3e8082180cb391013d204ef9f # v2.37.0
       with:
         php-version: ${{ env.PHP_VERSION }}
+        # Pin Composer to a release that includes the fix for GHSA-f9f8-rm49-7jv2
+        # (GITHUB_TOKEN disclosure in Composer's GitHub Actions log output).
+        tools: composer:2.9.8
       env:
         COMPOSER_TOKEN: ${{ inputs.packagist_github_token }}
 
