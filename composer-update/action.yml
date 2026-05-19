@@ -112,9 +112,35 @@ runs:
           echo "changed=true" >> "$GITHUB_OUTPUT"
         else
           # Step 2: Constraints blocked the update — try composer require
-          # (bumps to latest). Same `-W` reasoning applies.
-          echo "No update within constraints, trying: composer require -W ${{ inputs.packages }}"
+          # (bumps to latest, REPLACING the existing constraint). Same `-W`
+          # reasoning applies.
+          #
+          # Opt-out: packages listed under `extra.vuln-scan.no-widen` in the
+          # project's composer.json are skipped here. Use this for packages
+          # whose constraints are intentional (exact pin like "10.0.2", a
+          # locked-down range like "^1.1" the team won't widen automatically,
+          # license-tested version, etc.). The map's values are free-text
+          # reasons — they're not parsed by this action, they exist purely
+          # for in-place documentation of why each package opts out.
+          #
+          # Format (both shapes accepted):
+          #   "extra": { "vuln-scan": { "no-widen": {
+          #     "wpackagist-plugin/woocommerce": "License-tested only against 10.0.x"
+          #   } } }
+          # or:
+          #   "extra": { "vuln-scan": { "no-widen": [
+          #     "wpackagist-plugin/woocommerce"
+          #   ] } }
+          NO_WIDEN=$(jq -r '
+            .extra["vuln-scan"]["no-widen"] // {} |
+            if type == "array" then .[] else keys[] end
+          ' composer.json 2>/dev/null | tr '\n' ' ')
+          echo "No update within constraints, trying: composer require -W (filtered against extra.vuln-scan.no-widen)"
           for PACKAGE in ${{ inputs.packages }}; do
+            if echo " $NO_WIDEN " | grep -qF " $PACKAGE "; then
+              echo "  skip $PACKAGE — listed in extra.vuln-scan.no-widen"
+              continue
+            fi
             composer require -W "$PACKAGE" --no-interaction --no-scripts 2>&1 || true
           done
 
