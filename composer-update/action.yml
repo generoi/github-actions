@@ -133,14 +133,18 @@ runs:
         # `vendor/pkg:~1.2.3`) when the caller supplied a tight bound.
         # Tilde at offset >0 inside a single word isn't subject to shell
         # tilde expansion, so the colon-form is safe to interpolate.
+        # Trailing newline matters: expand_args_for() concatenates this
+        # with find_direct_ancestors() and pipes the result to `while read`;
+        # without it, a direct-dep package produces an unterminated line
+        # that `read` discards and the arg ends up empty.
         build_pkg_arg() {
           local pkg="$1"
           local c
           c=$(jq -r --arg p "$pkg" '.[$p] // ""' /tmp/composer-update-constraints.json)
           if [ -n "$c" ]; then
-            printf '%s:%s' "$pkg" "$c"
+            printf '%s:%s\n' "$pkg" "$c"
           else
-            printf '%s' "$pkg"
+            printf '%s\n' "$pkg"
           fi
         }
 
