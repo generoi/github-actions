@@ -193,8 +193,7 @@ runs:
               fi
               parents=$(awk -v t="$current" '$1 == t {print $2}' /tmp/composer-update-reverse.txt)
               if [ -n "$parents" ]; then
-                queue="$queue
-$parents"
+                queue=$(printf '%s\n%s' "$queue" "$parents")
               fi
             done
 
