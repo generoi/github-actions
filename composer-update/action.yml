@@ -144,6 +144,71 @@ runs:
           fi
         }
 
+        # Precompute the project's direct-dependency set + the lock's reverse-
+        # dependency map, used by:
+        #   - expand_args_for() below to include the direct-dep ancestor(s) of
+        #     each flagged transitive in the composer update call, so the
+        #     ancestor can move within its existing composer.json constraint
+        #   - the widen step (Step 2) below, to BFS from each unhandled
+        #     transitive up to a direct-dep ancestor it can widen
+        jq -r '((.require // {}) | keys) + ((.["require-dev"] // {}) | keys) | .[]' composer.json \
+          | sort -u > /tmp/composer-update-direct.txt
+        jq -r '
+          ((.packages // []) + (."packages-dev" // []))[] as $p |
+          ($p.require // {} | keys[]) as $child |
+          "\($child) \($p.name)"
+        ' composer.lock > /tmp/composer-update-reverse.txt
+
+        # Find direct-dep ancestor(s) of a package by BFS through the reverse
+        # map. Returns one ancestor per line. If the package is itself a
+        # direct dep, returns just that name.
+        find_direct_ancestors() {
+          local target="$1"
+          local seen="|"
+          local queue="$target"
+          local result=""
+          while [ -n "$queue" ]; do
+            local current
+            current=$(echo "$queue" | head -1)
+            queue=$(echo "$queue" | tail -n +2)
+            case "$seen" in *"|$current|"*) continue ;; esac
+            seen="$seen$current|"
+            if grep -qFx "$current" /tmp/composer-update-direct.txt; then
+              result="$result $current"
+              continue
+            fi
+            local parents
+            parents=$(awk -v t="$current" '$1 == t {print $2}' /tmp/composer-update-reverse.txt)
+            if [ -n "$parents" ]; then
+              queue=$(printf '%s\n%s' "$queue" "$parents")
+            fi
+          done
+          echo "$result" | tr ' ' '\n' | grep -v '^$' | sort -u
+        }
+
+        # Expand a single flagged package into the args we pass to composer:
+        # `name[:constraint]` for the package itself, plus the names of its
+        # direct-dep ancestor(s) when the flagged package is a transitive.
+        #
+        # Why: `composer update -W X` updates X and X's dependencies (downward),
+        # but NOT X's reverse-deps. For metapackages like roots/wordpress that
+        # pin roots/wordpress-no-content at self.version, the parent is locked
+        # at the same version as the transitive and won't move unless we list
+        # it explicitly. Without this expansion, updating wordpress-no-content
+        # within a tight ~constraint fails with "roots/wordpress is locked and
+        # not requested" and falls through to widening — which then rewrites
+        # composer.json unnecessarily.
+        #
+        # Ancestors get no constraint suffix: we only want them eligible for
+        # movement within their existing composer.json constraint.
+        expand_args_for() {
+          local pkg="$1"
+          build_pkg_arg "$pkg"
+          if ! grep -qFx "$pkg" /tmp/composer-update-direct.txt; then
+            find_direct_ancestors "$pkg"
+          fi
+        }
+
         # Step 1: Try composer update (stays within existing constraints).
         # `-W` (--with-all-dependencies) lets composer also update packages that
         # are LOCKED (not just those listed) when needed — required for cases
@@ -152,8 +217,14 @@ runs:
         # Composite actions run with `set -e`, so capture the exit code via
         # `|| UPDATE_EXIT=$?` to keep the fallback alive on a non-zero exit.
         declare -a BULK_ARGS=()
+        declare -A BULK_SEEN=()
         for PACKAGE in ${{ inputs.packages }}; do
-          BULK_ARGS+=("$(build_pkg_arg "$PACKAGE")")
+          while IFS= read -r arg; do
+            [ -z "$arg" ] && continue
+            [ -n "${BULK_SEEN[$arg]:-}" ] && continue
+            BULK_SEEN[$arg]=1
+            BULK_ARGS+=("$arg")
+          done < <(expand_args_for "$PACKAGE")
         done
         echo "Trying: composer update -W ${BULK_ARGS[*]}"
         UPDATE_EXIT=0
@@ -186,9 +257,12 @@ runs:
           if [ -n "$CURRENT_V" ] && [ "$BEFORE_V" != "$CURRENT_V" ]; then
             continue
           fi
-          PKG_ARG=$(build_pkg_arg "$PACKAGE")
-          echo "  retrying per-package: composer update -W $PKG_ARG"
-          composer update -W "$PKG_ARG" --no-interaction --no-scripts 2>&1 || true
+          declare -a RETRY_ARGS=()
+          while IFS= read -r arg; do
+            [ -n "$arg" ] && RETRY_ARGS+=("$arg")
+          done < <(expand_args_for "$PACKAGE")
+          echo "  retrying per-package: composer update -W ${RETRY_ARGS[*]}"
+          composer update -W "${RETRY_ARGS[@]}" --no-interaction --no-scripts 2>&1 || true
           RETRY_V=$(get_lock_version "$PACKAGE" composer.lock)
           if [ -n "$RETRY_V" ] && [ "$BEFORE_V" != "$RETRY_V" ]; then
             continue
@@ -227,33 +301,12 @@ runs:
           ' composer.json 2>/dev/null | tr '\n' ' ')
           echo "No update within constraints, trying: composer require -W (filtered against extra.vuln-scan.no-widen)"
 
-          # Precompute helpers for the require loop:
-          #
-          # 1. /tmp/composer-update-direct.txt — set of top-level requires
-          #    (require + require-dev) from composer.json. We only ever run
-          #    `composer require` against names in this set; otherwise a vuln
-          #    in a transitive (e.g. symfony/http-foundation pulled in by
-          #    another package) would get PROMOTED to a new top-level entry
-          #    in composer.json. The right answer for a transitive is to
-          #    widen the direct-dep ancestor(s) that pulled it in.
-          #
-          # 2. /tmp/composer-update-reverse.txt — reverse dependency map
-          #    derived from composer.lock, one "child parent" pair per line.
-          #    Used to BFS upward from a flagged transitive until we hit a
-          #    direct dep.
-          jq -r '((.require // {}) | keys) + ((.["require-dev"] // {}) | keys) | .[]' composer.json \
-            | sort -u > /tmp/composer-update-direct.txt
-          jq -r '
-            ((.packages // []) + (."packages-dev" // []))[] as $p |
-            ($p.require // {} | keys[]) as $child |
-            "\($child) \($p.name)"
-          ' composer.lock > /tmp/composer-update-reverse.txt
-
           # Expand the unhandled package list into the set of direct deps
           # we'll actually widen. Packages already moved by the per-package
           # update retry are NOT in $UNHANDLED, so they don't reach this
           # step and won't have their constraint widened unnecessarily.
-          # Transitives get replaced by their direct-dep ancestor(s);
+          # Transitives get replaced by their direct-dep ancestor(s) via
+          # find_direct_ancestors (defined at the top of this step);
           # multiple flagged packages converging on the same ancestor are
           # de-duped so we only widen each ancestor once.
           TARGETS=""
@@ -268,34 +321,13 @@ runs:
               continue
             fi
 
-            # Transitive: BFS upward through the reverse map until we land on
-            # direct-dep nodes. A transitive may be required by more than one
-            # direct dep — widen all of them, since any one of them might be
-            # the one capping the vulnerable version.
-            seen="|"
-            queue="$PACKAGE"
-            ancestors=""
-            while [ -n "$queue" ]; do
-              current=$(echo "$queue" | head -1)
-              queue=$(echo "$queue" | tail -n +2)
-              case "$seen" in *"|$current|"*) continue ;; esac
-              seen="$seen$current|"
-              if grep -qFx "$current" /tmp/composer-update-direct.txt; then
-                ancestors="$ancestors $current"
-                continue
-              fi
-              parents=$(awk -v t="$current" '$1 == t {print $2}' /tmp/composer-update-reverse.txt)
-              if [ -n "$parents" ]; then
-                queue=$(printf '%s\n%s' "$queue" "$parents")
-              fi
-            done
-
-            if [ -z "$ancestors" ]; then
+            ancestors=$(find_direct_ancestors "$PACKAGE" | tr '\n' ' ')
+            if [ -z "${ancestors// /}" ]; then
               echo "::warning::no direct-dep ancestor found for transitive $PACKAGE — cannot widen"
               continue
             fi
-            echo "  $PACKAGE is transitive — will widen ancestor(s):$ancestors"
-            TARGETS="$TARGETS$ancestors"
+            echo "  $PACKAGE is transitive — will widen ancestor(s): $ancestors"
+            TARGETS="$TARGETS $ancestors"
           done
 
           # Dedupe.
