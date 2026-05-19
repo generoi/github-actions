@@ -136,12 +136,107 @@ runs:
             if type == "array" then .[] else keys[] end
           ' composer.json 2>/dev/null | tr '\n' ' ')
           echo "No update within constraints, trying: composer require -W (filtered against extra.vuln-scan.no-widen)"
+
+          # Precompute helpers for the require loop:
+          #
+          # 1. /tmp/composer-update-direct.txt — set of top-level requires
+          #    (require + require-dev) from composer.json. We only ever run
+          #    `composer require` against names in this set; otherwise a vuln
+          #    in a transitive (e.g. symfony/http-foundation pulled in by
+          #    another package) would get PROMOTED to a new top-level entry
+          #    in composer.json. The right answer for a transitive is to
+          #    widen the direct-dep ancestor(s) that pulled it in.
+          #
+          # 2. /tmp/composer-update-reverse.txt — reverse dependency map
+          #    derived from composer.lock, one "child parent" pair per line.
+          #    Used to BFS upward from a flagged transitive until we hit a
+          #    direct dep.
+          jq -r '((.require // {}) | keys) + ((.["require-dev"] // {}) | keys) | .[]' composer.json \
+            | sort -u > /tmp/composer-update-direct.txt
+          jq -r '
+            ((.packages // []) + (."packages-dev" // []))[] as $p |
+            ($p.require // {} | keys[]) as $child |
+            "\($child) \($p.name)"
+          ' composer.lock > /tmp/composer-update-reverse.txt
+
+          # Expand the input package list into the set of direct deps we'll
+          # actually widen. Transitives get replaced by their direct-dep
+          # ancestor(s); multiple flagged packages converging on the same
+          # ancestor are de-duped so we only widen each ancestor once.
+          TARGETS=""
           for PACKAGE in ${{ inputs.packages }}; do
             if echo " $NO_WIDEN " | grep -qF " $PACKAGE "; then
               echo "  skip $PACKAGE — listed in extra.vuln-scan.no-widen"
               continue
             fi
-            composer require -W "$PACKAGE" --no-interaction --no-scripts 2>&1 || true
+
+            if grep -qFx "$PACKAGE" /tmp/composer-update-direct.txt; then
+              TARGETS="$TARGETS $PACKAGE"
+              continue
+            fi
+
+            # Transitive: BFS upward through the reverse map until we land on
+            # direct-dep nodes. A transitive may be required by more than one
+            # direct dep — widen all of them, since any one of them might be
+            # the one capping the vulnerable version.
+            seen="|"
+            queue="$PACKAGE"
+            ancestors=""
+            while [ -n "$queue" ]; do
+              current=$(echo "$queue" | head -1)
+              queue=$(echo "$queue" | tail -n +2)
+              case "$seen" in *"|$current|"*) continue ;; esac
+              seen="$seen$current|"
+              if grep -qFx "$current" /tmp/composer-update-direct.txt; then
+                ancestors="$ancestors $current"
+                continue
+              fi
+              parents=$(awk -v t="$current" '$1 == t {print $2}' /tmp/composer-update-reverse.txt)
+              if [ -n "$parents" ]; then
+                queue="$queue
+$parents"
+              fi
+            done
+
+            if [ -z "$ancestors" ]; then
+              echo "::warning::no direct-dep ancestor found for transitive $PACKAGE — cannot widen"
+              continue
+            fi
+            echo "  $PACKAGE is transitive — will widen ancestor(s):$ancestors"
+            TARGETS="$TARGETS$ancestors"
+          done
+
+          # Dedupe.
+          TARGETS=$(echo "$TARGETS" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' ')
+
+          for PACKAGE in $TARGETS; do
+            # Snapshot composer.json + composer.lock before each require so we
+            # can roll back if composer resolves the package to a dev-* branch
+            # constraint (e.g. dev-trunk). That happens on wpackagist plugins
+            # when the project sets minimum-stability: dev and no released tag
+            # outranks trunk — never a safe answer for a vuln scanner.
+            cp composer.json /tmp/composer-update-pre-require.json
+            cp composer.lock /tmp/composer-update-pre-require.lock
+
+            # Preserve the require / require-dev placement. `composer require`
+            # defaults to `require`; without `--dev` it will MOVE a package
+            # that was originally in require-dev (e.g. phpunit/phpunit) into
+            # require, which silently changes the prod dependency surface.
+            REQUIRE_FLAGS="-W"
+            if jq -e --arg p "$PACKAGE" '(.["require-dev"] // {})[$p]' composer.json >/dev/null; then
+              REQUIRE_FLAGS="-W --dev"
+            fi
+
+            composer require $REQUIRE_FLAGS "$PACKAGE" --no-interaction --no-scripts 2>&1 || true
+
+            NEW_CONSTRAINT=$(jq -r --arg p "$PACKAGE" '(.require // {})[$p] // (.["require-dev"] // {})[$p] // ""' composer.json)
+            case "$NEW_CONSTRAINT" in
+              dev-*)
+                echo "::warning::composer require resolved $PACKAGE to '$NEW_CONSTRAINT' — reverting (dev branch constraints are not accepted)"
+                cp /tmp/composer-update-pre-require.json composer.json
+                cp /tmp/composer-update-pre-require.lock composer.lock
+                ;;
+            esac
           done
 
           if git diff --quiet composer.json composer.lock; then
