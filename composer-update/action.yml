@@ -190,6 +190,40 @@ runs:
           echo "$result" | tr ' ' '\n' | grep -v '^$' | sort -u
         }
 
+        # Derive a "same-major, not-affected" loose constraint from the tight
+        # `~X.Y.Z` form: `>=X.Y.Z, <(X+1).0.0`. Used as a fallback when the
+        # tight retry matches no published version (e.g. CVE upper bound
+        # `<=6.6.3` heuristic'd to `~6.6.4`, but WordPress never tagged
+        # 6.6.4 — the next release is 6.7.0). Lets composer pick the next
+        # safe version within composer.json's existing constraint rather
+        # than falling through to widening.
+        loosen_constraint() {
+          local tight="$1"
+          if [[ "$tight" =~ ^~([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            local major="${BASH_REMATCH[1]}"
+            local minor="${BASH_REMATCH[2]}"
+            local patch="${BASH_REMATCH[3]}"
+            printf '>=%s.%s.%s,<%s.0.0' "$major" "$minor" "$patch" "$((major + 1))"
+          fi
+        }
+
+        # Safety net for the loose retry: confirm the package's new locked
+        # version is OUT of every range in its `affected` field before
+        # accepting the update. composer audit's advisory database normally
+        # blocks vulnerable versions, but `audit.block-insecure` defaults
+        # vary by project and we'd rather over-revert than ship a "fix"
+        # that doesn't fix anything.
+        is_still_vulnerable() {
+          local pkg="$1"
+          local version="$2"
+          if [ ! -s /tmp/composer-update-vulns.json ] || [ -z "$version" ]; then
+            echo no
+            return
+          fi
+          php "${{ github.action_path }}/scripts/is-still-vulnerable.php" \
+            /tmp/composer-update-vulns.json "$pkg" "$version"
+        }
+
         # Expand a single flagged package into the args we pass to composer:
         # `name[:constraint]` for the package itself, plus the names of its
         # direct-dep ancestor(s) when the flagged package is a transitive.
@@ -265,12 +299,54 @@ runs:
           while IFS= read -r arg; do
             [ -n "$arg" ] && RETRY_ARGS+=("$arg")
           done < <(expand_args_for "$PACKAGE")
-          echo "  retrying per-package: composer update -W ${RETRY_ARGS[*]}"
+          echo "  retrying per-package (tight): composer update -W ${RETRY_ARGS[*]}"
           composer update -W "${RETRY_ARGS[@]}" --no-interaction --no-scripts 2>&1 || true
           RETRY_V=$(get_lock_version "$PACKAGE" composer.lock)
           if [ -n "$RETRY_V" ] && [ "$BEFORE_V" != "$RETRY_V" ]; then
             continue
           fi
+
+          # Tight retry produced no movement — either the constraint is
+          # outside composer.json's range (genuine widen-needed case), or
+          # the tight ~X.Y.Z range has no published version (e.g.
+          # WP never tagged 6.6.4, only 6.7+). For the second case we
+          # can still avoid widening composer.json by using a loose
+          # constraint `>=X.Y.Z, <(X+1).0.0` which lets composer pick
+          # the next safe version within the project's existing
+          # constraint. The first case will also try this and still
+          # fail — falling through to the widen step as before.
+          TIGHT=$(jq -r --arg p "$PACKAGE" '.[$p] // ""' /tmp/composer-update-constraints.json)
+          LOOSE=$(loosen_constraint "$TIGHT")
+          if [ -n "$LOOSE" ]; then
+            declare -a LOOSE_ARGS=("$PACKAGE:$LOOSE")
+            if ! grep -qFx "$PACKAGE" /tmp/composer-update-direct.txt; then
+              while IFS= read -r anc; do
+                [ -n "$anc" ] && LOOSE_ARGS+=("$anc")
+              done < <(find_direct_ancestors "$PACKAGE")
+            fi
+
+            # Snapshot composer.json + composer.lock so we can revert if
+            # the loose retry moves the package to a still-vulnerable
+            # version. (composer's own audit-blocking usually prevents
+            # this, but we don't rely on it.)
+            cp composer.json /tmp/composer-update-pre-loose.json
+            cp composer.lock /tmp/composer-update-pre-loose.lock
+
+            echo "  retrying per-package (loose): composer update -W ${LOOSE_ARGS[*]}"
+            composer update -W "${LOOSE_ARGS[@]}" --no-interaction --no-scripts 2>&1 || true
+            LOOSE_V=$(get_lock_version "$PACKAGE" composer.lock)
+            if [ -n "$LOOSE_V" ] && [ "$BEFORE_V" != "$LOOSE_V" ]; then
+              if [ "$(is_still_vulnerable "$PACKAGE" "$LOOSE_V")" = "no" ]; then
+                echo "  loose retry succeeded: $PACKAGE $BEFORE_V → $LOOSE_V (out of affected range, composer.json untouched)"
+                continue
+              else
+                echo "::warning::loose retry moved $PACKAGE to $LOOSE_V but it's still in the affected range — reverting"
+                cp /tmp/composer-update-pre-loose.json composer.json
+                cp /tmp/composer-update-pre-loose.lock composer.lock
+              fi
+            fi
+          fi
+
           UNHANDLED="$UNHANDLED $PACKAGE"
         done
 
