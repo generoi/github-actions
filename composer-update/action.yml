@@ -25,6 +25,20 @@ inputs:
     required: false
     default: 'fix/update'
     description: 'Branch name prefix'
+  vulns_json:
+    required: false
+    default: ''
+    description: |
+      Optional JSON array of vulnerability records (one per package) with at
+      least `{package, affected}` fields — i.e. the shape produced by parsing
+      `composer audit --format=json`. When set, the action derives a tight
+      `~min_safe.minor.0` constraint per package from each record's
+      `affected` range and passes `pkg:constraint` to composer's update and
+      require calls. This caps bumps at patch-level within the safe-version
+      minor, preventing the common over-bump where a CVE patched in 10.5.3
+      would otherwise let composer jump to 10.7.0 inside an existing `^10.x`
+      constraint. Packages with no parseable upper bound fall through to the
+      unconstrained behavior.
 
 outputs:
   pr_url:
@@ -88,10 +102,47 @@ runs:
       if: steps.check.outputs.skip != 'true'
       id: update
       shell: bash
+      env:
+        VULNS_JSON: ${{ inputs.vulns_json }}
       run: |
         # Snapshot composer.lock to a tempfile BEFORE any composer ops run,
         # so we have an untouched copy for the before/after version diff.
         cp composer.lock /tmp/composer-update-before.lock
+
+        # Derive minimum-safe constraints from the optional vulns_json input.
+        # The PHP helper parses each vuln's `affected` range, finds the one
+        # that contains the currently-locked version, and emits a tight
+        # `~X.Y.Z` constraint capping at patch-level. Empty input → empty
+        # constraint map → unconstrained behavior throughout.
+        echo '{}' > /tmp/composer-update-constraints.json
+        if [ -n "${VULNS_JSON:-}" ]; then
+          printf '%s' "$VULNS_JSON" > /tmp/composer-update-vulns.json
+          if jq -e 'type == "array"' /tmp/composer-update-vulns.json >/dev/null 2>&1; then
+            php "${{ github.action_path }}/scripts/compute-min-safe-constraints.php" \
+              /tmp/composer-update-vulns.json composer.lock \
+              > /tmp/composer-update-constraints.json
+            echo "Minimum-safe constraints:"
+            jq . /tmp/composer-update-constraints.json
+          else
+            echo "::warning::vulns_json input is not a valid JSON array — falling back to unconstrained behavior"
+          fi
+        fi
+
+        # Build the composer arg for a single package: just the name if no
+        # constraint is configured for it, or `name:constraint` (e.g.
+        # `vendor/pkg:~1.2.3`) when the caller supplied a tight bound.
+        # Tilde at offset >0 inside a single word isn't subject to shell
+        # tilde expansion, so the colon-form is safe to interpolate.
+        build_pkg_arg() {
+          local pkg="$1"
+          local c
+          c=$(jq -r --arg p "$pkg" '.[$p] // ""' /tmp/composer-update-constraints.json)
+          if [ -n "$c" ]; then
+            printf '%s:%s' "$pkg" "$c"
+          else
+            printf '%s' "$pkg"
+          fi
+        }
 
         # Step 1: Try composer update (stays within existing constraints).
         # `-W` (--with-all-dependencies) lets composer also update packages that
@@ -100,9 +151,13 @@ runs:
         # as roots/wordpress; without -W neither can move.
         # Composite actions run with `set -e`, so capture the exit code via
         # `|| UPDATE_EXIT=$?` to keep the fallback alive on a non-zero exit.
-        echo "Trying: composer update -W ${{ inputs.packages }}"
+        declare -a BULK_ARGS=()
+        for PACKAGE in ${{ inputs.packages }}; do
+          BULK_ARGS+=("$(build_pkg_arg "$PACKAGE")")
+        done
+        echo "Trying: composer update -W ${BULK_ARGS[*]}"
         UPDATE_EXIT=0
-        composer update -W ${{ inputs.packages }} --no-interaction --no-scripts 2>&1 || UPDATE_EXIT=$?
+        composer update -W "${BULK_ARGS[@]}" --no-interaction --no-scripts 2>&1 || UPDATE_EXIT=$?
         if [ "$UPDATE_EXIT" -ne 0 ]; then
           echo "::warning::bulk composer update exited with code $UPDATE_EXIT — will retry per package"
         fi
@@ -131,8 +186,9 @@ runs:
           if [ -n "$CURRENT_V" ] && [ "$BEFORE_V" != "$CURRENT_V" ]; then
             continue
           fi
-          echo "  retrying per-package: composer update -W $PACKAGE"
-          composer update -W "$PACKAGE" --no-interaction --no-scripts 2>&1 || true
+          PKG_ARG=$(build_pkg_arg "$PACKAGE")
+          echo "  retrying per-package: composer update -W $PKG_ARG"
+          composer update -W "$PKG_ARG" --no-interaction --no-scripts 2>&1 || true
           RETRY_V=$(get_lock_version "$PACKAGE" composer.lock)
           if [ -n "$RETRY_V" ] && [ "$BEFORE_V" != "$RETRY_V" ]; then
             continue
@@ -264,8 +320,9 @@ runs:
             fi
 
             BEFORE_REQUIRE_V=$(get_lock_version "$PACKAGE" /tmp/composer-update-pre-require.lock)
+            PKG_ARG=$(build_pkg_arg "$PACKAGE")
 
-            composer require $REQUIRE_FLAGS "$PACKAGE" --no-interaction --no-scripts 2>&1 || true
+            composer require $REQUIRE_FLAGS "$PKG_ARG" --no-interaction --no-scripts 2>&1 || true
 
             NEW_CONSTRAINT=$(jq -r --arg p "$PACKAGE" '(.require // {})[$p] // (.["require-dev"] // {})[$p] // ""' composer.json)
             AFTER_REQUIRE_V=$(get_lock_version "$PACKAGE" composer.lock)
