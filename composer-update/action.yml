@@ -263,16 +263,48 @@ runs:
               REQUIRE_FLAGS="-W --dev"
             fi
 
+            BEFORE_REQUIRE_V=$(get_lock_version "$PACKAGE" /tmp/composer-update-pre-require.lock)
+
             composer require $REQUIRE_FLAGS "$PACKAGE" --no-interaction --no-scripts 2>&1 || true
 
             NEW_CONSTRAINT=$(jq -r --arg p "$PACKAGE" '(.require // {})[$p] // (.["require-dev"] // {})[$p] // ""' composer.json)
+            AFTER_REQUIRE_V=$(get_lock_version "$PACKAGE" composer.lock)
+
+            # Two reasons to throw out the require outcome and restore the
+            # snapshot:
+            #
+            # 1. dev-* constraint — wpackagist plugins whose trunk readme
+            #    declares a version higher than the latest stable tag can
+            #    resolve to e.g. dev-trunk; never a safe answer for a vuln
+            #    scanner.
+            #
+            # 2. Downgrade — `composer require -W <pkg>` with no constraint
+            #    can pick a LOWER version than the one currently locked
+            #    when audit.block-insecure blocks all sub-deps of newer
+            #    versions (e.g. roots/wordpress 6.x metapackages all
+            #    require roots/wordpress-no-content self.version, which is
+            #    audit-blocked, so composer walks back to roots/wordpress
+            #    5.9.3 which predates the metapackage split). A fix-by-
+            #    downgrade is never the right answer; surface it as a
+            #    triage signal instead.
+            REVERT_REASON=""
             case "$NEW_CONSTRAINT" in
               dev-*)
-                echo "::warning::composer require resolved $PACKAGE to '$NEW_CONSTRAINT' — reverting (dev branch constraints are not accepted)"
-                cp /tmp/composer-update-pre-require.json composer.json
-                cp /tmp/composer-update-pre-require.lock composer.lock
+                REVERT_REASON="resolved to dev branch constraint '$NEW_CONSTRAINT'"
                 ;;
             esac
+            if [ -z "$REVERT_REASON" ] && [ -n "$BEFORE_REQUIRE_V" ] && [ -n "$AFTER_REQUIRE_V" ] && [ "$BEFORE_REQUIRE_V" != "$AFTER_REQUIRE_V" ]; then
+              LOWER=$(printf '%s\n%s\n' "$BEFORE_REQUIRE_V" "$AFTER_REQUIRE_V" | sort -V | head -1)
+              if [ "$LOWER" = "$AFTER_REQUIRE_V" ]; then
+                REVERT_REASON="downgrade $BEFORE_REQUIRE_V → $AFTER_REQUIRE_V (likely blocked by audit advisory on a sub-dep)"
+              fi
+            fi
+
+            if [ -n "$REVERT_REASON" ]; then
+              echo "::warning::composer require on $PACKAGE — reverting: $REVERT_REASON"
+              cp /tmp/composer-update-pre-require.json composer.json
+              cp /tmp/composer-update-pre-require.lock composer.lock
+            fi
           done
 
           if git diff --quiet composer.json composer.lock; then
