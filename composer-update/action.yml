@@ -104,13 +104,47 @@ runs:
         UPDATE_EXIT=0
         composer update -W ${{ inputs.packages }} --no-interaction --no-scripts 2>&1 || UPDATE_EXIT=$?
         if [ "$UPDATE_EXIT" -ne 0 ]; then
-          echo "::warning::composer update exited with code $UPDATE_EXIT, falling through to composer require"
+          echo "::warning::bulk composer update exited with code $UPDATE_EXIT — will retry per package"
         fi
 
-        if ! git diff --quiet composer.json composer.lock; then
-          echo "Updated within existing constraints"
+        # Per-package retry. `composer update -W <list>` is transactional —
+        # if even ONE listed package can't reach a satisfying version within
+        # constraints (e.g. faq-schema-block-to-accordion whose only fix is
+        # on dev-trunk, which we reject), composer rolls back the entire
+        # batch and leaves the lock untouched. That would punish packages
+        # like phpunit/phpunit whose fix IS available within their current
+        # constraint, by forcing them through the widening step. Loop
+        # per-package: for any package whose locked version didn't move,
+        # retry the update on just that one so a single unfixable package
+        # can't poison the rest.
+        get_lock_version() {
+          jq -r --arg p "$1" '
+            ((.packages // []) + (."packages-dev" // []))
+            | map(select(.name == $p)) | first | .version // empty
+          ' "$2"
+        }
+
+        UNHANDLED=""
+        for PACKAGE in ${{ inputs.packages }}; do
+          BEFORE_V=$(get_lock_version "$PACKAGE" /tmp/composer-update-before.lock)
+          CURRENT_V=$(get_lock_version "$PACKAGE" composer.lock)
+          if [ -n "$CURRENT_V" ] && [ "$BEFORE_V" != "$CURRENT_V" ]; then
+            continue
+          fi
+          echo "  retrying per-package: composer update -W $PACKAGE"
+          composer update -W "$PACKAGE" --no-interaction --no-scripts 2>&1 || true
+          RETRY_V=$(get_lock_version "$PACKAGE" composer.lock)
+          if [ -n "$RETRY_V" ] && [ "$BEFORE_V" != "$RETRY_V" ]; then
+            continue
+          fi
+          UNHANDLED="$UNHANDLED $PACKAGE"
+        done
+
+        if [ -z "$UNHANDLED" ]; then
+          echo "Updated all packages within existing constraints"
           echo "changed=true" >> "$GITHUB_OUTPUT"
         else
+          echo "Packages still needing a constraint bump:$UNHANDLED"
           # Step 2: Constraints blocked the update — try composer require
           # (bumps to latest, REPLACING the existing constraint). Same `-W`
           # reasoning applies.
@@ -159,12 +193,15 @@ runs:
             "\($child) \($p.name)"
           ' composer.lock > /tmp/composer-update-reverse.txt
 
-          # Expand the input package list into the set of direct deps we'll
-          # actually widen. Transitives get replaced by their direct-dep
-          # ancestor(s); multiple flagged packages converging on the same
-          # ancestor are de-duped so we only widen each ancestor once.
+          # Expand the unhandled package list into the set of direct deps
+          # we'll actually widen. Packages already moved by the per-package
+          # update retry are NOT in $UNHANDLED, so they don't reach this
+          # step and won't have their constraint widened unnecessarily.
+          # Transitives get replaced by their direct-dep ancestor(s);
+          # multiple flagged packages converging on the same ancestor are
+          # de-duped so we only widen each ancestor once.
           TARGETS=""
-          for PACKAGE in ${{ inputs.packages }}; do
+          for PACKAGE in $UNHANDLED; do
             if echo " $NO_WIDEN " | grep -qF " $PACKAGE "; then
               echo "  skip $PACKAGE — listed in extra.vuln-scan.no-widen"
               continue
