@@ -148,6 +148,31 @@ runs:
           fi
         }
 
+        # Build the composer arg for the WIDEN step (composer require), which
+        # REPLACES the project's constraint rather than tightening within it.
+        # Here the package gets a caret `^min_safe` (e.g. `^27.1.2` =
+        # `>=27.1.2,<28.0.0`) instead of the patch-pinned tight `~min_safe`.
+        # Why: `composer require` is reached only when the in-constraint
+        # update already failed — i.e. the fix lives OUTSIDE composer.json's
+        # current constraint (e.g. project pins `^26.0` but the patched
+        # release is 27.x). A tight `~27.1.2` would (a) pin to a single patch
+        # line that often doesn't exist (Yoast went 27.1.1 → 27.2, no 27.1.2)
+        # and (b) defeat the whole point of widening. The caret spans the
+        # safe-version's whole major, so composer can land on the real fix
+        # (27.6) while still not crossing into the next major. Packages with
+        # no min_safe (no vulns_json) fall back to a bare name — unconstrained
+        # widening, as before.
+        build_widen_arg() {
+          local pkg="$1"
+          local c
+          c=$(jq -r --arg p "$pkg" '.[$p] // ""' /tmp/composer-update-constraints.json)
+          if [[ "$c" =~ ^~([0-9.]+)$ ]]; then
+            printf '%s:^%s' "$pkg" "${BASH_REMATCH[1]}"
+          else
+            printf '%s' "$pkg"
+          fi
+        }
+
         # Precompute the project's direct-dependency set + the lock's reverse-
         # dependency map, used by:
         #   - expand_args_for() below to include the direct-dep ancestor(s) of
@@ -432,8 +457,9 @@ runs:
             fi
 
             BEFORE_REQUIRE_V=$(get_lock_version "$PACKAGE" /tmp/composer-update-pre-require.lock)
-            PKG_ARG=$(build_pkg_arg "$PACKAGE")
+            PKG_ARG=$(build_widen_arg "$PACKAGE")
 
+            echo "  widening: composer require $REQUIRE_FLAGS $PKG_ARG"
             composer require $REQUIRE_FLAGS "$PKG_ARG" --no-interaction --no-scripts 2>&1 || true
 
             NEW_CONSTRAINT=$(jq -r --arg p "$PACKAGE" '(.require // {})[$p] // (.["require-dev"] // {})[$p] // ""' composer.json)
