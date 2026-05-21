@@ -212,7 +212,12 @@ runs:
               queue=$(printf '%s\n%s' "$queue" "$parents")
             fi
           done
-          echo "$result" | tr ' ' '\n' | grep -v '^$' | sort -u
+          # `|| true`: an empty result (no direct-dep ancestor found) is a
+          # valid outcome, not an error — but `grep -v '^$'` exits 1 on no
+          # match, which under `set -eo pipefail` would propagate out of the
+          # `$(...)`/pipe at the call sites and abort the step. Callers already
+          # handle an empty list, so return cleanly here.
+          echo "$result" | tr ' ' '\n' | grep -v '^$' | sort -u || true
         }
 
         # Derive a "same-major, not-affected" loose constraint from the tight
@@ -435,8 +440,14 @@ runs:
             TARGETS="$TARGETS $ancestors"
           done
 
-          # Dedupe.
-          TARGETS=$(echo "$TARGETS" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' ')
+          # Dedupe. `|| true`: when every unhandled package was skipped via
+          # no-widen, TARGETS is empty and `grep -v '^$'` matches nothing,
+          # exiting 1 — which under `set -eo pipefail` would kill the whole
+          # step and abort PR creation, even when Step 1 already moved other
+          # packages within constraints. Swallow the empty-match exit so we
+          # fall through to the git-diff check below and still raise a PR for
+          # whatever did update.
+          TARGETS=$(echo "$TARGETS" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' ' || true)
 
           for PACKAGE in $TARGETS; do
             # Snapshot composer.json + composer.lock before each require so we
