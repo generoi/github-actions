@@ -113,4 +113,7 @@ foreach ($vulns as $v) {
     }
 }
 
-echo json_encode($result, JSON_UNESCAPED_SLASHES);
+// Cast to object so an empty result encodes as `{}`, not `[]`. composer-update
+// string-indexes this map with `jq '.[$pkg]'`, which errors on a JSON array —
+// so an empty array would break the consumer under `set -eo pipefail`.
+echo json_encode((object) $result, JSON_UNESCAPED_SLASHES);
