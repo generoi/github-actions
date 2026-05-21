@@ -1,0 +1,44 @@
+name: "Test: composer-update"
+
+on:
+  pull_request:
+    paths:
+      - 'composer-update/**'
+      - '.github/workflows/composer-update-tests.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'composer-update/**'
+      - '.github/workflows/composer-update-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Run composer-update tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # jq, git and bash are preinstalled on ubuntu-latest runners.
+      - name: Run shell tests
+        run: |
+          shopt -s nullglob
+          tests=(composer-update/tests/*.test.sh)
+          if [ ${#tests[@]} -eq 0 ]; then
+            echo "No tests found" >&2
+            exit 1
+          fi
+          fail=0
+          for t in "${tests[@]}"; do
+            echo "::group::$t"
+            if bash "$t"; then
+              echo "ok: $t"
+            else
+              echo "::error::$t failed"
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $fail
