@@ -67,6 +67,21 @@ assert_contains "$out" "roots/wordpress" "plus the direct-dep ancestor"
 echo '{"roots/wordpress":"~6.8.5"}' > "$CON"
 assert_eq "$(expand_args_for roots/wordpress)" "roots/wordpress:~6.8.5" "direct dep -> only its own arg"
 
+echo "== extract_pr_set =="
+body_a='blah
+<!-- vuln-update-set: a/x,b/y -->
+## title'
+assert_eq "$(extract_pr_set "$body_a" vuln-update-set)" "a/x,b/y" "extracts the marker set"
+assert_eq "$(extract_pr_set "no marker here" vuln-update-set)" "" "absent marker -> empty"
+assert_eq "$(extract_pr_set "$body_a" dependencies-set)" "" "different label key -> empty"
+
+echo "== decide_pr_action =="
+assert_eq "$(decide_pr_action false 'a,b' '')"      "create" "no existing PR -> create"
+assert_eq "$(decide_pr_action true  'a,b' 'a,b')"   "skip"   "same set -> skip (silent)"
+assert_eq "$(decide_pr_action true  'a,b,c' 'a,b')" "update" "set grew -> update in place"
+assert_eq "$(decide_pr_action true  'a' 'a,b')"     "update" "set shrank -> update in place"
+assert_eq "$(decide_pr_action true  '' 'a,b')"      "update" "empty new set (no marker) -> update, never silent"
+
 echo "== get_lock_version =="
 printf '{"packages":[{"name":"vendor/a","version":"v1.2.3"}],"packages-dev":[{"name":"dev/b","version":"2.0.0"}]}' > /tmp/_lock.json
 assert_eq "$(get_lock_version vendor/a /tmp/_lock.json)" "v1.2.3" "reads version from packages"
