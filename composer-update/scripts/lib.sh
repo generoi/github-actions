@@ -162,3 +162,37 @@ get_lock_version() {
     | map(select(.name == $p)) | first | .version // empty
   ' "$2"
 }
+
+# --- PR dedup / refresh decision (used by action.yml's "Resolve existing PR")---
+
+# Extract a `<!-- <marker_key>: a,b,c -->` set marker from a PR body. Echoes the
+# comma-joined set (e.g. "a,b") or empty string if the marker is absent. The
+# scan workflow embeds the sorted-unique finding set in this marker so a PR can
+# be compared against the current findings across runs.
+extract_pr_set() {
+  local body="$1" marker_key="$2"
+  printf '%s' "$body" | grep -oE "$marker_key: [^ ]+ -->" | head -1 \
+    | sed -E "s/.*${marker_key}: ([^ ]+) -->.*/\1/"
+}
+
+# Decide what to do with an auto-update PR given the current findings:
+#   create — no open PR exists → open a fresh one
+#   skip   — an open PR already records this exact set → do nothing (silent)
+#   update — an open PR exists but the set changed → refresh it in place
+# Args: <has_existing: true|false> <new_set> <existing_set>
+#
+# `update` (not a fresh PR) keeps a single rolling PR per label, and refreshing
+# the existing PR's body marker is what makes a subsequently-unchanged set hit
+# `skip` next run — so findings drift no longer re-comments every day. An empty
+# new_set (no marker) is treated as a change, matching the pre-extraction
+# behavior of always notifying when the marker can't be compared.
+decide_pr_action() {
+  local has_existing="$1" new_set="$2" existing_set="$3"
+  if [ "$has_existing" != "true" ]; then
+    echo create
+  elif [ -n "$new_set" ] && [ "$new_set" = "$existing_set" ]; then
+    echo skip
+  else
+    echo update
+  fi
+}

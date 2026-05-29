@@ -42,64 +42,54 @@ inputs:
 
 outputs:
   pr_url:
-    description: 'URL of the open PR — newly created, or the existing one hit by dedup. Empty if no PR was opened or touched.'
+    description: 'URL of the open PR — newly created, or the existing one refreshed/deduped. Empty if no PR was opened or touched.'
     value: ${{ steps.create.outputs.pr_url || steps.check.outputs.pr_url }}
 
 runs:
   using: 'composite'
   steps:
-    - name: Check for existing PR (dedup)
+    - name: Resolve existing PR (dedup)
       id: check
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token || github.token }}
         PR_BODY: ${{ inputs.pr_body }}
       run: |
-        # Dedup by label. If an open PR with this label exists we skip creating
-        # a duplicate. To avoid silently dropping NEW findings while a stale PR
-        # sits open, we compare the marker in PR_BODY (e.g. `<!-- vuln-update-set:
-        # foo,bar -->`) to the same marker in the open PR's body — if the package
-        # set differs, post a comment so reviewers see the new findings.
-        EXISTING=$(gh pr list --label "${{ inputs.pr_label }}" --state open --limit 1 --json number,url,body)
+        # One rolling PR per label. Decide create / skip / update by comparing
+        # the `<!-- <label>-set: a,b,c -->` marker in PR_BODY against the same
+        # marker in the open PR's body:
+        #   create — no open PR             → "Open or refresh PR" makes one
+        #   skip   — open PR has this set   → do nothing (findings unchanged)
+        #   update — open PR, set changed   → refresh that PR in place
+        # The refresh rewrites the PR body (so the marker tracks the latest
+        # findings); that's what makes an unchanged set hit `skip` the next run
+        # instead of re-commenting daily. Decision logic lives in lib.sh so it
+        # is unit-tested (see tests/lib-functions.test.sh).
+        source "$GITHUB_ACTION_PATH/scripts/lib.sh"
+        MARKER_KEY="${{ inputs.pr_label }}-set"
+        NEW_SET=$(extract_pr_set "$PR_BODY" "$MARKER_KEY")
+
+        EXISTING=$(gh pr list --label "${{ inputs.pr_label }}" --state open --limit 1 --json number,url,headRefName,body)
         EXISTING_NUM=$(echo "$EXISTING" | jq -r '.[0].number // empty')
 
         if [ -z "$EXISTING_NUM" ]; then
-          echo "No open PR with label '${{ inputs.pr_label }}' — will create one"
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
-
-        # Expose the existing PR URL so callers can link to it even on silent dedup.
-        EXISTING_URL=$(echo "$EXISTING" | jq -r '.[0].url // empty')
-        echo "pr_url=$EXISTING_URL" >> "$GITHUB_OUTPUT"
-
-        echo "Open PR #$EXISTING_NUM with label '${{ inputs.pr_label }}' exists — checking if findings differ"
-        EXISTING_BODY=$(echo "$EXISTING" | jq -r '.[0].body // ""')
-
-        # Extract `<!-- ${LABEL}-set: a,b,c -->` marker from both bodies.
-        # If markers match (or both empty), the findings are identical — skip silently.
-        MARKER_KEY="${{ inputs.pr_label }}-set"
-        EXISTING_SET=$(printf '%s' "$EXISTING_BODY" | grep -oE "$MARKER_KEY: [^ ]+ -->" | head -1 | sed -E "s/.*${MARKER_KEY}: ([^ ]+) -->.*/\1/")
-        NEW_SET=$(printf '%s' "$PR_BODY" | grep -oE "$MARKER_KEY: [^ ]+ -->" | head -1 | sed -E "s/.*${MARKER_KEY}: ([^ ]+) -->.*/\1/")
-
-        echo "Existing set: ${EXISTING_SET:-<none>}"
-        echo "New set:      ${NEW_SET:-<none>}"
-
-        if [ -n "$NEW_SET" ] && [ "$NEW_SET" = "$EXISTING_SET" ]; then
-          echo "Findings unchanged since PR #$EXISTING_NUM was opened — skipping silently"
+          MODE=$(decide_pr_action false "$NEW_SET" "")
+          echo "No open PR with label '${{ inputs.pr_label }}' — mode=$MODE"
         else
-          echo "Findings differ — posting comment to PR #$EXISTING_NUM"
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          {
-            printf '## Updated findings — [run #%s](%s)\n\n' "${{ github.run_number }}" "$RUN_URL"
-            printf '%s\n' "$PR_BODY"
-          } > /tmp/composer-update-comment.md
-          gh pr comment "$EXISTING_NUM" --body-file /tmp/composer-update-comment.md
+          EXISTING_URL=$(echo "$EXISTING" | jq -r '.[0].url // empty')
+          EXISTING_HEAD=$(echo "$EXISTING" | jq -r '.[0].headRefName // empty')
+          EXISTING_BODY=$(echo "$EXISTING" | jq -r '.[0].body // ""')
+          EXISTING_SET=$(extract_pr_set "$EXISTING_BODY" "$MARKER_KEY")
+          MODE=$(decide_pr_action true "$NEW_SET" "$EXISTING_SET")
+          echo "pr_url=$EXISTING_URL" >> "$GITHUB_OUTPUT"
+          echo "existing_num=$EXISTING_NUM" >> "$GITHUB_OUTPUT"
+          echo "existing_head=$EXISTING_HEAD" >> "$GITHUB_OUTPUT"
+          echo "Open PR #$EXISTING_NUM | existing set: ${EXISTING_SET:-<none>} | new set: ${NEW_SET:-<none>} | mode=$MODE"
         fi
-        echo "skip=true" >> "$GITHUB_OUTPUT"
+        echo "mode=$MODE" >> "$GITHUB_OUTPUT"
 
     - name: Update packages
-      if: steps.check.outputs.skip != 'true'
+      if: steps.check.outputs.mode != 'skip'
       id: update
       shell: bash
       env:
@@ -107,19 +97,39 @@ runs:
         PACKAGES: ${{ inputs.packages }}
       run: bash "$GITHUB_ACTION_PATH/scripts/update.sh"
 
-    - name: Create PR
-      if: steps.check.outputs.skip != 'true' && steps.update.outputs.changed == 'true'
+    - name: Open or refresh PR
+      if: steps.check.outputs.mode != 'skip'
       id: create
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token || github.token }}
         PR_BODY: ${{ inputs.pr_body }}
         PACKAGES: ${{ inputs.packages }}
+        MODE: ${{ steps.check.outputs.mode }}
+        CHANGED: ${{ steps.update.outputs.changed }}
+        EXISTING_NUM: ${{ steps.check.outputs.existing_num }}
+        EXISTING_HEAD: ${{ steps.check.outputs.existing_head }}
+        EXISTING_URL: ${{ steps.check.outputs.pr_url }}
       run: |
-        BRANCH="${{ inputs.branch_prefix }}-$(date +%Y%m%d-%H%M%S)"
+        # Full PR body = the scan-provided body (marker + findings table) plus
+        # the Version changes table the update step produced (if any). Body-file
+        # keeps backticks / $() in the markdown literal.
+        {
+          printf '%s' "$PR_BODY"
+          if [ -s /tmp/composer-update-versions.md ]; then
+            cat /tmp/composer-update-versions.md
+          fi
+        } > /tmp/composer-update-pr-body.md
+
+        # create + no resolvable fix → there's nothing to open and no PR to
+        # refresh. (The unfixable finding still surfaces via the caller's alert.)
+        if [ "$MODE" = "create" ] && [ "$CHANGED" != "true" ]; then
+          echo "No update available and no existing PR — nothing to open"
+          exit 0
+        fi
+
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-
         # Remove actions/checkout's credential config — it sets includeIf
         # entries and extraheader with the GITHUB_TOKEN which overrides any
         # other auth method we try to use. Must be cleared before pushing.
@@ -129,40 +139,63 @@ runs:
         git config --local --unset-all 'http.https://github.com/.extraheader' 2>/dev/null || true
         git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
 
-        git checkout -b "$BRANCH"
-        git add composer.json composer.lock
+        # Commit the working-tree fix. Title in subject, package list in body so
+        # `git blame` on composer.lock answers "why did this version change?".
+        commit_fix() {
+          git add composer.json composer.lock
+          {
+            printf '%s\n\n' "${{ inputs.pr_title }}"
+            echo "Updated packages:"
+            for pkg in $PACKAGES; do
+              echo "- $pkg"
+            done
+          } > /tmp/composer-update-commit.txt
+          git commit -F /tmp/composer-update-commit.txt
+        }
 
-        # Commit message: title in subject, package list in body so `git blame`
-        # on composer.lock answers "why did this version change?".
+        if [ "$MODE" = "create" ]; then
+          BRANCH="${{ inputs.branch_prefix }}-$(date +%Y%m%d-%H%M%S)"
+          git checkout -b "$BRANCH"
+          commit_fix
+          git push origin "$BRANCH"
+          # Ensure the dedup label exists (idempotent — no-ops if present).
+          gh label create "${{ inputs.pr_label }}" \
+            --color FFAA00 \
+            --description "Auto-generated dependency update PR" \
+            2>/dev/null || true
+          PR_URL=$(gh pr create \
+            --title "${{ inputs.pr_title }}" \
+            --label "${{ inputs.pr_label }}" \
+            --body-file /tmp/composer-update-pr-body.md)
+          echo "Created PR: $PR_URL"
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        # MODE=update: refresh the existing PR in place so it always reflects
+        # the current findings, rather than opening a second PR or letting the
+        # original go stale.
+        if [ "$CHANGED" = "true" ]; then
+          # Force the PR's head branch to "base + current fix". We're on the
+          # freshly-updated checkout, so commit here and force-push to its head.
+          git checkout -b "refresh-$(date +%Y%m%d-%H%M%S)"
+          commit_fix
+          git push -f origin "HEAD:${EXISTING_HEAD}"
+          echo "Refreshed branch '$EXISTING_HEAD' on PR #$EXISTING_NUM"
+        else
+          echo "New findings have no resolvable fix — refreshing PR #$EXISTING_NUM body/comment only"
+        fi
+
+        # Rewrite the body so the set marker tracks the latest findings (this is
+        # what lets an unchanged set hit `skip` next run instead of re-posting),
+        # and drop a timeline comment so reviewers see the change. Because this
+        # only runs in `update` mode (set genuinely changed), it can't recur
+        # daily on a static finding set.
+        gh pr edit "$EXISTING_NUM" --body-file /tmp/composer-update-pr-body.md
+        RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         {
-          printf '%s\n\n' "${{ inputs.pr_title }}"
-          echo "Updated packages:"
-          for pkg in $PACKAGES; do
-            echo "- $pkg"
-          done
-        } > /tmp/composer-update-commit.txt
-        git commit -F /tmp/composer-update-commit.txt
-
-        git push origin "$BRANCH"
-
-        # Ensure the dedup label exists on the repo (idempotent — silently
-        # no-ops if it already exists). Avoids needing per-repo setup.
-        gh label create "${{ inputs.pr_label }}" \
-          --color FFAA00 \
-          --description "Auto-generated dependency update PR" \
-          2>/dev/null || true
-
-        # Use --body-file so backticks / $() / etc. in markdown stay literal.
-        # Append the Version changes table built by the Update step (if any).
-        {
-          printf '%s' "$PR_BODY"
-          if [ -s /tmp/composer-update-versions.md ]; then
-            cat /tmp/composer-update-versions.md
-          fi
-        } > /tmp/composer-update-pr-body.md
-        PR_URL=$(gh pr create \
-          --title "${{ inputs.pr_title }}" \
-          --label "${{ inputs.pr_label }}" \
-          --body-file /tmp/composer-update-pr-body.md)
-        echo "Created PR: $PR_URL"
-        echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+          printf '## Findings changed — refreshed by [run #%s](%s)\n\n' "${{ github.run_number }}" "$RUN_URL"
+          printf '%s\n' "$PR_BODY"
+        } > /tmp/composer-update-comment.md
+        gh pr comment "$EXISTING_NUM" --body-file /tmp/composer-update-comment.md
+        echo "pr_url=$EXISTING_URL" >> "$GITHUB_OUTPUT"
