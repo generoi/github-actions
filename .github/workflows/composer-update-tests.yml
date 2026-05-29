@@ -19,7 +19,7 @@ jobs:
     name: Run composer-update tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # The PHP helper tests run the real helpers and bootstrap composer/semver
       # into a temp vendor dir. jq, git and bash are preinstalled on the runner.
