@@ -44,6 +44,9 @@ outputs:
   pr_url:
     description: 'URL of the open PR — newly created, or the existing one refreshed/deduped. Empty if no PR was opened or touched.'
     value: ${{ steps.create.outputs.pr_url || steps.check.outputs.pr_url }}
+  outcome:
+    description: 'What happened: created | refreshed | skipped | none. Lets callers suppress redundant notifications when nothing changed (skipped).'
+    value: ${{ steps.create.outputs.outcome || steps.check.outputs.outcome }}
 
 runs:
   using: 'composite'
@@ -87,6 +90,11 @@ runs:
           echo "Open PR #$EXISTING_NUM | existing set: ${EXISTING_SET:-<none>} | new set: ${NEW_SET:-<none>} | mode=$MODE"
         fi
         echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+        # skip is terminal here (the create step won't run), so record the
+        # outcome now; create/update outcomes are set by "Open or refresh PR".
+        if [ "$MODE" = "skip" ]; then
+          echo "outcome=skipped" >> "$GITHUB_OUTPUT"
+        fi
 
     - name: Update packages
       if: steps.check.outputs.mode != 'skip'
@@ -104,98 +112,17 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.token || github.token }}
         PR_BODY: ${{ inputs.pr_body }}
+        PR_TITLE: ${{ inputs.pr_title }}
+        PR_LABEL: ${{ inputs.pr_label }}
+        BRANCH_PREFIX: ${{ inputs.branch_prefix }}
         PACKAGES: ${{ inputs.packages }}
         MODE: ${{ steps.check.outputs.mode }}
         CHANGED: ${{ steps.update.outputs.changed }}
         EXISTING_NUM: ${{ steps.check.outputs.existing_num }}
         EXISTING_HEAD: ${{ steps.check.outputs.existing_head }}
         EXISTING_URL: ${{ steps.check.outputs.pr_url }}
-      run: |
-        # Full PR body = the scan-provided body (marker + findings table) plus
-        # the Version changes table the update step produced (if any). Body-file
-        # keeps backticks / $() in the markdown literal.
-        {
-          printf '%s' "$PR_BODY"
-          if [ -s /tmp/composer-update-versions.md ]; then
-            cat /tmp/composer-update-versions.md
-          fi
-        } > /tmp/composer-update-pr-body.md
-
-        # create + no resolvable fix → there's nothing to open and no PR to
-        # refresh. (The unfixable finding still surfaces via the caller's alert.)
-        if [ "$MODE" = "create" ] && [ "$CHANGED" != "true" ]; then
-          echo "No update available and no existing PR — nothing to open"
-          exit 0
-        fi
-
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        # Remove actions/checkout's credential config — it sets includeIf
-        # entries and extraheader with the GITHUB_TOKEN which overrides any
-        # other auth method we try to use. Must be cleared before pushing.
-        for key in $(git config --local --name-only --get-regexp '^includeIf\.gitdir:' 2>/dev/null); do
-          git config --local --unset-all "$key" 2>/dev/null || true
-        done
-        git config --local --unset-all 'http.https://github.com/.extraheader' 2>/dev/null || true
-        git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
-
-        # Commit the working-tree fix. Title in subject, package list in body so
-        # `git blame` on composer.lock answers "why did this version change?".
-        commit_fix() {
-          git add composer.json composer.lock
-          {
-            printf '%s\n\n' "${{ inputs.pr_title }}"
-            echo "Updated packages:"
-            for pkg in $PACKAGES; do
-              echo "- $pkg"
-            done
-          } > /tmp/composer-update-commit.txt
-          git commit -F /tmp/composer-update-commit.txt
-        }
-
-        if [ "$MODE" = "create" ]; then
-          BRANCH="${{ inputs.branch_prefix }}-$(date +%Y%m%d-%H%M%S)"
-          git checkout -b "$BRANCH"
-          commit_fix
-          git push origin "$BRANCH"
-          # Ensure the dedup label exists (idempotent — no-ops if present).
-          gh label create "${{ inputs.pr_label }}" \
-            --color FFAA00 \
-            --description "Auto-generated dependency update PR" \
-            2>/dev/null || true
-          PR_URL=$(gh pr create \
-            --title "${{ inputs.pr_title }}" \
-            --label "${{ inputs.pr_label }}" \
-            --body-file /tmp/composer-update-pr-body.md)
-          echo "Created PR: $PR_URL"
-          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
-
-        # MODE=update: refresh the existing PR in place so it always reflects
-        # the current findings, rather than opening a second PR or letting the
-        # original go stale.
-        if [ "$CHANGED" = "true" ]; then
-          # Force the PR's head branch to "base + current fix". We're on the
-          # freshly-updated checkout, so commit here and force-push to its head.
-          git checkout -b "refresh-$(date +%Y%m%d-%H%M%S)"
-          commit_fix
-          git push -f origin "HEAD:${EXISTING_HEAD}"
-          echo "Refreshed branch '$EXISTING_HEAD' on PR #$EXISTING_NUM"
-        else
-          echo "New findings have no resolvable fix — refreshing PR #$EXISTING_NUM body/comment only"
-        fi
-
-        # Rewrite the body so the set marker tracks the latest findings (this is
-        # what lets an unchanged set hit `skip` next run instead of re-posting),
-        # and drop a timeline comment so reviewers see the change. Because this
-        # only runs in `update` mode (set genuinely changed), it can't recur
-        # daily on a static finding set.
-        gh pr edit "$EXISTING_NUM" --body-file /tmp/composer-update-pr-body.md
-        RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-        {
-          printf '## Findings changed — refreshed by [run #%s](%s)\n\n' "${{ github.run_number }}" "$RUN_URL"
-          printf '%s\n' "$PR_BODY"
-        } > /tmp/composer-update-comment.md
-        gh pr comment "$EXISTING_NUM" --body-file /tmp/composer-update-comment.md
-        echo "pr_url=$EXISTING_URL" >> "$GITHUB_OUTPUT"
+        REPO: ${{ github.repository }}
+        SERVER_URL: ${{ github.server_url }}
+        RUN_NUMBER: ${{ github.run_number }}
+        RUN_ID: ${{ github.run_id }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/open-or-refresh-pr.sh"

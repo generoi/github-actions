@@ -107,4 +107,52 @@ assert_eq "$(get_lock_version vendor/safe composer.lock)" "1.0.5" "safe package 
 assert_eq "$(json_constraint vendor/x)" "1.0.0" "no-widen (array form) left x pinned"
 assert_contains "$RUN_LOG" "skip vendor/x — listed in extra.vuln-scan.no-widen" "array-form no-widen honored"
 
+echo "=================================================================="
+echo "(A) still-vulnerable after update is flagged, not silently 'fixed'"
+echo "=================================================================="
+# Fake composer moves vendor/x to 1.0.5, but the advisory affects <=1.5.0 — so
+# the bump lands INSIDE the affected range (the class of bug a wrong min-safe
+# constraint causes). The tight/bulk path doesn't re-verify, so A's final guard
+# must catch it and record it as not-actually-fixed.
+new_project \
+  '{"require":{"vendor/x":"^1.0"}}' \
+  '{"packages":[{"name":"vendor/x","version":"1.0.0","require":{}}],"packages-dev":[]}' \
+  '
+args="$*"
+case "$args" in
+  validate*) exit 0 ;;
+  update*vendor/x*)
+    tmp=$(mktemp); jq "(.packages[]|select(.name==\"vendor/x\").version)=\"1.0.5\"" composer.lock > "$tmp" && mv "$tmp" composer.lock
+    ;;
+esac
+exit 0'
+ensure_semver_vendor "$PWD"
+export PACKAGES="vendor/x"
+run_update '[{"package":"vendor/x","affected":"<=1.5.0"}]'
+assert_eq "$(get_lock_version vendor/x composer.lock)" "1.0.5" "package moved (a PR is still raised)"
+assert_contains "$(cat "$GITHUB_OUTPUT")" "changed=true" "PR raised for the moved package"
+assert_contains "$RUN_LOG" "still in its advisory's affected range" "warned it is not a real fix"
+assert_contains "$(cat /tmp/composer-update-still-vulnerable.txt)" "vendor/x" "recorded in still-vulnerable list"
+
+echo "=================================================================="
+echo "(E) a lockfile that fails composer validate is reverted, no PR"
+echo "=================================================================="
+new_project \
+  '{"require":{"vendor/y":"^1.0"}}' \
+  '{"packages":[{"name":"vendor/y","version":"1.0.0","require":{}}],"packages-dev":[]}' \
+  '
+args="$*"
+case "$args" in
+  validate*) echo "The lock file is not up to date" >&2; exit 1 ;;
+  update*vendor/y*)
+    tmp=$(mktemp); jq "(.packages[]|select(.name==\"vendor/y\").version)=\"1.0.5\"" composer.lock > "$tmp" && mv "$tmp" composer.lock
+    ;;
+esac
+exit 0'
+export PACKAGES="vendor/y"
+run_update ""
+assert_eq "$(get_lock_version vendor/y composer.lock)" "1.0.0" "lock reverted after failed validate"
+assert_contains "$RUN_LOG" "composer validate failed" "logged the validate failure"
+assert_contains "$(cat "$GITHUB_OUTPUT")" "changed=false" "no PR when the result doesn't validate"
+
 finish
