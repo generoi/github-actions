@@ -38,7 +38,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup project
-        uses: generoi/github-actions/setup@v1
+        uses: generoi/github-actions/setup@v2
         with:
           npm_fontawesome_auth_token: ${{ secrets.NPM_FONTAWESOME_AUTH_TOKEN }}
           packagist_github_token: ${{ secrets.PACKAGIST_GITHUB_TOKEN }}
@@ -51,7 +51,7 @@ jobs:
         run: composer ci --no-interaction
 
       - name: Install WordPress
-        uses: generoi/github-actions/install-wordpress@v1
+        uses: generoi/github-actions/install-wordpress@v2
         with:
           multisite: ${{ inputs.multisite }}
           activate_plugins: ${{ inputs.activate_plugins }}
