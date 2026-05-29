@@ -47,10 +47,16 @@ build_pkg_arg() {
 # widening, as before. (#29)
 build_widen_arg() {
   local pkg="$1"
-  local c
+  local c range_re='^>([0-9]+)\.([0-9]+)\.([0-9]+),<'
   c=$(jq -r --arg p "$pkg" '.[$p] // ""' /tmp/composer-update-constraints.json)
   if [[ "$c" =~ ^~([0-9.]+)$ ]]; then
     printf '%s:^%s' "$pkg" "${BASH_REMATCH[1]}"
+  elif [[ "$c" =~ $range_re ]]; then
+    # Inclusive-bound range (>X.Y.Z,<X.(Y+1).0 from compute-min-safe-
+    # constraints). Widen to span the whole major while still excluding the
+    # vulnerable boundary X.Y.Z. A caret can't express a strict-greater
+    # lower bound, so emit an explicit `>X.Y.Z,<(X+1).0.0` range.
+    printf '%s:>%s.%s.%s,<%s.0.0' "$pkg" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "$(( ${BASH_REMATCH[1]} + 1 ))"
   else
     printf '%s' "$pkg"
   fi
@@ -92,11 +98,20 @@ find_direct_ancestors() {
 # than falling through to widening. (#28)
 loosen_constraint() {
   local tight="$1"
+  local range_re='^>([0-9]+)\.([0-9]+)\.([0-9]+),<'
   if [[ "$tight" =~ ^~([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
     local major="${BASH_REMATCH[1]}"
     local minor="${BASH_REMATCH[2]}"
     local patch="${BASH_REMATCH[3]}"
     printf '>=%s.%s.%s,<%s.0.0' "$major" "$minor" "$patch" "$((major + 1))"
+  elif [[ "$tight" =~ $range_re ]]; then
+    # Inclusive-bound range (>X.Y.Z,<X.(Y+1).0): broaden the minor cap to a
+    # major cap, keeping the strict-greater lower bound that excludes the
+    # vulnerable boundary X.Y.Z.
+    local major="${BASH_REMATCH[1]}"
+    local minor="${BASH_REMATCH[2]}"
+    local patch="${BASH_REMATCH[3]}"
+    printf '>%s.%s.%s,<%s.0.0' "$major" "$minor" "$patch" "$((major + 1))"
   fi
 }
 

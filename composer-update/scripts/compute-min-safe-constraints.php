@@ -5,26 +5,31 @@
  *
  * Reads a parsed-vulns JSON array (objects with at minimum {package, affected})
  * and the project's composer.lock; emits a JSON object mapping
- *   {package} => {tight ~constraint}
+ *   {package} => {minimum-safe, minor-capped constraint}
  * to stdout.
  *
  * Strategy: for each vuln, find the affected-range that contains the currently
- * locked version, then derive a `~X.Y.Z` constraint capping at the minor of
- * the smallest safe version. composer's tilde semantics (`~X.Y.Z` =
- * `>=X.Y.Z, <X.(Y+1)`) keep the bump within the same minor, preventing the
- * common over-bump where a CVE patched in 10.5.3 leaves composer free to
- * jump to 10.7.0 inside an existing `^10.x` constraint.
+ * locked version, then derive a constraint capping at the minor of the
+ * smallest safe version. The minor cap prevents the common over-bump where a
+ * CVE patched in 10.5.3 leaves composer free to jump to 10.7.0 inside an
+ * existing `^10.x` constraint.
  *
  * Upper-bound parsing:
- *   <X.Y.Z   → ~X.Y.Z              (exclusive — the simple case)
- *   <=X.Y.Z  → ~X.Y.(Z+1)          (heuristic next-patch cap; if no such
- *                                    version is published the constraint
- *                                    fails to resolve and composer-update
- *                                    reports the package as untouched —
- *                                    preferable to over-bumping silently)
+ *   <X.Y.Z   → ~X.Y.Z              (exclusive: the fix is exactly X.Y.Z;
+ *                                    `~X.Y.Z` = `>=X.Y.Z, <X.(Y+1).0`)
+ *   <=X.Y.Z  → >X.Y.Z,<X.(Y+1).0   (inclusive: the fix is anything strictly
+ *                                    above the boundary. We can NOT assume the
+ *                                    next patch X.Y.(Z+1) — packages often ship
+ *                                    a 4-segment hotfix like X.Y.Z.1, which a
+ *                                    `~X.Y.(Z+1)` constraint would skip over.
+ *                                    A strict-greater lower bound matches the
+ *                                    hotfix while excluding the vulnerable
+ *                                    boundary itself.)
  *
  * Packages with no parseable upper bound get no entry and fall through to
- * unconstrained behavior in composer-update.
+ * unconstrained behavior in composer-update. The `~X.Y.Z` and `>X.Y.Z,<…`
+ * shapes are both understood downstream by lib.sh's loosen_constraint() and
+ * build_widen_arg().
  *
  * Usage: php compute-min-safe-constraints.php <vulns.json> <composer.lock>
  */
@@ -98,16 +103,22 @@ foreach ($vulns as $v) {
             break;
         }
 
-        // Inclusive upper bound: <=X[.Y[.Z]]. Bump the patch component to
-        // get a heuristic "first safe" version. If no such version exists
-        // on Packagist the tight constraint fails to resolve in
-        // composer-update — which surfaces the package as untouched
-        // instead of letting composer pick the latest minor.
+        // Inclusive upper bound: <=X[.Y[.Z]]. The first safe version is
+        // anything strictly greater than the boundary, capped at the same
+        // minor. Do NOT assume the fix is the next *patch* (X.Y.(Z+1)):
+        // packages frequently ship the fix as a 4-segment hotfix like
+        // X.Y.Z.1 (e.g. wpackagist seo-by-rank-math advisory `<=1.0.271`
+        // was fixed in 1.0.271.1), which is >X.Y.Z but <X.Y.(Z+1). A
+        // `~X.Y.(Z+1)` constraint skips right over that hotfix and fails
+        // to resolve. Emit `>X.Y.Z,<X.(Y+1).0`: a strict-greater lower
+        // bound (so the vulnerable boundary X.Y.Z itself is excluded)
+        // capped at the next minor, same as the `<` tilde case.
         if (preg_match('/<=\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?\b/', $range, $m)) {
             $major     = $m[1];
             $minor     = ($m[2] ?? '') !== '' ? $m[2] : '0';
-            $patchNext = (int) (($m[3] ?? '') !== '' ? $m[3] : '0') + 1;
-            $result[$pkg] = "~$major.$minor.$patchNext";
+            $patch     = ($m[3] ?? '') !== '' ? $m[3] : '0';
+            $minorNext = (int) $minor + 1;
+            $result[$pkg] = ">$major.$minor.$patch,<$major.$minorNext.0";
             break;
         }
     }

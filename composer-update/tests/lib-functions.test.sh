@@ -31,12 +31,18 @@ assert_eq "$(build_widen_arg vendor/a)" "vendor/a:^27.1.2" "tight ~X.Y.Z widens 
 assert_eq "$(build_widen_arg vendor/b)" "vendor/b" "no constraint -> bare name (unconstrained widen)"
 echo '{"vendor/a":">=1.0,<2.0"}' > "$CON"
 assert_eq "$(build_widen_arg vendor/a)" "vendor/a" "non-tilde constraint -> bare name"
+# Inclusive-bound range (from a `<=X.Y.Z` advisory): widens to a major-capped
+# range that keeps the strict-greater lower bound (boundary stays excluded).
+echo '{"vendor/a":">1.0.271,<1.1.0"}' > "$CON"
+assert_eq "$(build_widen_arg vendor/a)" "vendor/a:>1.0.271,<2.0.0" "inclusive-bound range widens to major-capped range"
 
 echo "== loosen_constraint (#28) =="
 assert_eq "$(loosen_constraint '~6.6.4')"  ">=6.6.4,<7.0.0"   "~6.6.4 -> same-major loose range"
 assert_eq "$(loosen_constraint '~10.5.3')" ">=10.5.3,<11.0.0" "~10.5.3 -> >=10.5.3,<11.0.0"
 assert_eq "$(loosen_constraint '~6.6')"    ""                 "2-part tilde -> empty (needs X.Y.Z)"
 assert_eq "$(loosen_constraint '^1.0.0')"  ""                 "caret -> empty"
+# Inclusive-bound range loosens its minor cap to a major cap.
+assert_eq "$(loosen_constraint '>1.0.271,<1.1.0')" ">1.0.271,<2.0.0" "inclusive-bound range -> major-capped"
 
 echo "== find_direct_ancestors (#22, #26) =="
 printf 'roots/wordpress\nvendor/x\n' > "$DIRECT"
