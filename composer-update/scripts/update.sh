@@ -311,11 +311,38 @@ VERSION_DIFF_COUNT=$(jq -r --slurpfile after /tmp/composer-update-after.json '
 
 echo "Version changes detected: $VERSION_DIFF_COUNT"
 
+# (A) Final safety net: never present a package as fixed if its resulting
+# locked version is STILL inside the advisory's affected range. Catches a wrong
+# min-safe constraint (see the `<=` 4-segment-hotfix bug) that composer's own
+# audit-blocking didn't stop. Runs on every outcome — including the no-move case
+# below — so open-or-refresh-pr.sh can surface unfixed packages in the PR body.
+# is_still_vulnerable returns "no" when no vulns_json was supplied, so plain
+# dependency-update runs are unaffected.
+: > /tmp/composer-update-still-vulnerable.txt
+for PACKAGE in $PACKAGES; do
+  FINAL_V=$(get_lock_version "$PACKAGE" composer.lock)
+  if [ "$(is_still_vulnerable "$PACKAGE" "$FINAL_V")" = "yes" ]; then
+    echo "::warning::$PACKAGE is still in its advisory's affected range (now ${FINAL_V:-<unchanged>}) — not a real fix, needs manual triage"
+    printf '%s\t%s\n' "$PACKAGE" "$FINAL_V" >> /tmp/composer-update-still-vulnerable.txt
+  fi
+done
+
 if [ "$VERSION_DIFF_COUNT" -eq 0 ]; then
   echo "composer.lock changed but no package versions moved — skipping PR"
   echo "changed=false" >> "$GITHUB_OUTPUT"
   # Reset lock to avoid leaving metadata-only changes staged
   git checkout -- composer.json composer.lock 2>/dev/null || true
+  exit 0
+fi
+
+# (E) Don't ship a lockfile that doesn't validate. A bad require/widen can leave
+# composer.json inconsistent or out of sync with the lock; reject and revert
+# rather than open a PR that breaks `composer install` on deploy.
+if ! composer validate --no-check-all --no-check-publish --quiet >/tmp/composer-update-validate.log 2>&1; then
+  echo "::error::composer validate failed after update — reverting, no PR"
+  cat /tmp/composer-update-validate.log || true
+  git checkout -- composer.json composer.lock 2>/dev/null || true
+  echo "changed=false" >> "$GITHUB_OUTPUT"
   exit 0
 fi
 

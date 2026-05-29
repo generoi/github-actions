@@ -121,7 +121,12 @@ new_project() {
   git add -A && git commit -qm init
   write_fake_composer "$dir/bin" "$composer_body"
   export PATH="$dir/bin:$PATH"
-  export GITHUB_ACTION_PATH="$SCRIPTS_DIR"
+  # GitHub sets GITHUB_ACTION_PATH to the action root (the dir holding
+  # action.yml); update.sh resolves its PHP helpers as
+  # "$GITHUB_ACTION_PATH/scripts/...". Point it at the action root, not scripts/,
+  # or those resolve to scripts/scripts/ (only hit once a test drives the PHP
+  # helpers through update.sh, i.e. with a non-empty VULNS_JSON).
+  export GITHUB_ACTION_PATH="$ACTION_DIR"
   export GITHUB_OUTPUT="$dir/github_output"
   : > "$GITHUB_OUTPUT"
 }
