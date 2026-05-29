@@ -21,24 +21,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # jq, git and bash are preinstalled on ubuntu-latest runners.
-      - name: Run shell tests
-        run: |
-          shopt -s nullglob
-          tests=(composer-update/tests/*.test.sh)
-          if [ ${#tests[@]} -eq 0 ]; then
-            echo "No tests found" >&2
-            exit 1
-          fi
-          fail=0
-          for t in "${tests[@]}"; do
-            echo "::group::$t"
-            if bash "$t"; then
-              echo "ok: $t"
-            else
-              echo "::error::$t failed"
-              fail=1
-            fi
-            echo "::endgroup::"
-          done
-          exit $fail
+      # The PHP helper tests run the real helpers and bootstrap composer/semver
+      # into a temp vendor dir. jq, git and bash are preinstalled on the runner.
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          tools: composer
+
+      - name: Run tests
+        run: chmod +x composer-update/tests/run.sh && composer-update/tests/run.sh
