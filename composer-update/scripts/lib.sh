@@ -62,6 +62,82 @@ build_widen_arg() {
   fi
 }
 
+# Normalize the constraint `composer require` persisted during the WIDEN step
+# into the idiomatic caret a human would have written.
+#
+# Why: build_widen_arg emits a raw range (`>X.Y.Z,<(X+1).0.0`) for advisories
+# with an INCLUSIVE upper bound, because a caret cannot express the
+# strict-greater lower bound that excludes the vulnerable boundary. That range
+# is correct for *resolution*, but `composer require` writes whatever
+# constraint you hand it straight into composer.json — so a resolution-time
+# artifact becomes the project's declared dependency (Yoast's `<=28.0`
+# advisory left `">28.0.0,<29.0.0"` behind in 18 repos). Once resolution has
+# picked a concrete version, anchor the declaration to that instead.
+#
+# Safe by construction: a caret's lower bound IS the resolved version, and
+# update.sh has already verified that version sits outside every affected
+# range. The caret is therefore always a subset of the range composer just
+# resolved under — it can never re-admit anything the range excluded.
+#
+# Style: match the precision the project author used (`^27.6` -> `^28.1`, not
+# `^28.1.0`). But dropping precision moves the floor back DOWN, which can
+# re-admit the advisory — a locked 28.0.1 rendered as `^28.0` means
+# `>=28.0.0`, letting the vulnerable 28.0.0 back in. So a reduced-precision
+# candidate is only accepted once its *floor* passes is_still_vulnerable;
+# otherwise we add segments until it does, ending at the full resolved
+# version (whose floor update.sh already verified).
+#
+# Args: <written_constraint> <pre_require_constraint> <resolved_version> <pkg>
+# Echoes the caret to write, or nothing when no rewrite applies: already
+# idiomatic, non-numeric resolution (dev-*), or no candidate is safe.
+normalize_widen_constraint() {
+  local written="$1" previous="$2" resolved="$3" pkg="$4"
+
+  # Only raw ranges need rewriting. A caret/tilde is already idiomatic (that's
+  # the `~min_safe` -> `^min_safe` widen path, or composer's own choice after
+  # an unconstrained require), and an exact pin is a deliberate decision we
+  # have no business reinterpreting.
+  case "$written" in
+    '') return ;;
+    '^'*|'~'*) return ;;
+    *,*|'>'*|'<'*) : ;;
+    *) return ;;
+  esac
+
+  # Composer locks tag-style releases as `v1.2.3`; constraints omit the `v`.
+  local v="${resolved#v}"
+  [[ "$v" =~ ^[0-9]+(\.[0-9]+)*$ ]] || return
+
+  local -a parts
+  IFS='.' read -ra parts <<< "$v"
+  local full=${#parts[@]}
+
+  # Desired precision, taken from the constraint the author had before the
+  # widen. Only a caret/tilde carries a style signal; a range or exact pin
+  # gives none, so those fall through to the full resolved version.
+  local want=$full
+  if [[ "$previous" =~ ^[\^~]([0-9]+(\.[0-9]+)*)$ ]]; then
+    local -a prev_parts
+    IFS='.' read -ra prev_parts <<< "${BASH_REMATCH[1]}"
+    want=${#prev_parts[@]}
+    [ "$want" -gt "$full" ] && want=$full
+  fi
+
+  local n candidate floor pad
+  for (( n = want; n <= full; n++ )); do
+    candidate=$(IFS='.'; echo "${parts[*]:0:n}")
+    # A caret's lower bound is the candidate zero-padded to three segments
+    # (`^28.0` means `>=28.0.0`) — check that floor, not the literal string.
+    floor="$candidate"
+    pad=$n
+    while [ "$pad" -lt 3 ]; do floor="$floor.0"; pad=$((pad + 1)); done
+    if [ "$(is_still_vulnerable "$pkg" "$floor")" = "no" ]; then
+      printf '^%s' "$candidate"
+      return
+    fi
+  done
+}
+
 # Find direct-dep ancestor(s) of a package by BFS through the reverse
 # map. Returns one ancestor per line. If the package is itself a
 # direct dep, returns just that name. (#22, #26)

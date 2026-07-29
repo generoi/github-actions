@@ -135,6 +135,95 @@ assert_contains "$RUN_LOG" "still in its advisory's affected range" "warned it i
 assert_contains "$(cat /tmp/composer-update-still-vulnerable.txt)" "vendor/x" "recorded in still-vulnerable list"
 
 echo "=================================================================="
+echo "widen constraint is normalized to an idiomatic caret"
+echo "=================================================================="
+# The Yoast regression: advisory `<=28.0` (inclusive) makes build_widen_arg
+# emit the raw range `>28.0.0,<29.0.0`, which composer require then wrote
+# verbatim into composer.json across 18 repos. After resolution lands on
+# 28.1.0 we re-require at `^28.1` — the 2-part precision the author used.
+new_project \
+  '{"require":{"vendor/seo":"^27.6"}}' \
+  '{"packages":[{"name":"vendor/seo","version":"27.6.0","require":{}}],"packages-dev":[]}' \
+  '
+args="$*"
+case "$args" in
+  validate*) exit 0 ;;
+  update*) exit 0 ;;   # the fix lives outside ^27.6 — nothing moves in-constraint
+  require*"vendor/seo:^28.1"*)
+    tmp=$(mktemp); jq ".require[\"vendor/seo\"]=\"^28.1\"" composer.json > "$tmp" && mv "$tmp" composer.json
+    ;;
+  require*"vendor/seo:>28.0.0,<29.0.0"*)
+    tmp=$(mktemp); jq "(.packages[]|select(.name==\"vendor/seo\").version)=\"28.1.0\"" composer.lock > "$tmp" && mv "$tmp" composer.lock
+    tmp=$(mktemp); jq ".require[\"vendor/seo\"]=\">28.0.0,<29.0.0\"" composer.json > "$tmp" && mv "$tmp" composer.json
+    ;;
+esac
+exit 0'
+ensure_semver_vendor "$PWD"
+export PACKAGES="vendor/seo"
+run_update '[{"package":"vendor/seo","affected":"<=28.0"}]'
+assert_eq "$(json_constraint vendor/seo)" "^28.1" "raw range normalized to ^28.1"
+assert_eq "$(get_lock_version vendor/seo composer.lock)" "28.1.0" "resolved version unchanged by the rewrite"
+assert_contains "$RUN_LOG" "normalizing constraint: vendor/seo >28.0.0,<29.0.0 → ^28.1" "logged the normalization"
+assert_contains "$(cat "$GITHUB_OUTPUT")" "changed=true" "PR still raised"
+
+echo "=================================================================="
+echo "normalization keeps precision when a shorter caret would re-admit the CVE"
+echo "=================================================================="
+# Same advisory and same author style, but the fix shipped as a PATCH (28.0.1).
+# `^28.0` means >=28.0.0 — which lets the vulnerable 28.0.0 back in — so the
+# precision guard must keep the third segment.
+new_project \
+  '{"require":{"vendor/seo":"^27.6"}}' \
+  '{"packages":[{"name":"vendor/seo","version":"27.6.0","require":{}}],"packages-dev":[]}' \
+  '
+args="$*"
+case "$args" in
+  validate*) exit 0 ;;
+  update*) exit 0 ;;
+  require*"vendor/seo:^28.0.1"*)
+    tmp=$(mktemp); jq ".require[\"vendor/seo\"]=\"^28.0.1\"" composer.json > "$tmp" && mv "$tmp" composer.json
+    ;;
+  require*"vendor/seo:>28.0.0,<29.0.0"*)
+    tmp=$(mktemp); jq "(.packages[]|select(.name==\"vendor/seo\").version)=\"28.0.1\"" composer.lock > "$tmp" && mv "$tmp" composer.lock
+    tmp=$(mktemp); jq ".require[\"vendor/seo\"]=\">28.0.0,<29.0.0\"" composer.json > "$tmp" && mv "$tmp" composer.json
+    ;;
+esac
+exit 0'
+ensure_semver_vendor "$PWD"
+export PACKAGES="vendor/seo"
+run_update '[{"package":"vendor/seo","affected":"<=28.0"}]'
+assert_eq "$(json_constraint vendor/seo)" "^28.0.1" "kept the patch segment (^28.0 would re-admit 28.0.0)"
+assert_eq "$(get_lock_version vendor/seo composer.lock)" "28.0.1" "still on the patched version"
+
+echo "=================================================================="
+echo "a failed normalization keeps the correct-but-ugly range"
+echo "=================================================================="
+# If the re-require can not record the caret, correctness beats tidiness:
+# restore the range composer already resolved under rather than ship a
+# manifest whose constraint does not match its lock.
+new_project \
+  '{"require":{"vendor/seo":"^27.6"}}' \
+  '{"packages":[{"name":"vendor/seo","version":"27.6.0","require":{}}],"packages-dev":[]}' \
+  '
+args="$*"
+case "$args" in
+  validate*) exit 0 ;;
+  update*) exit 0 ;;
+  require*"vendor/seo:^28.1"*) exit 1 ;;   # normalization re-require fails
+  require*"vendor/seo:>28.0.0,<29.0.0"*)
+    tmp=$(mktemp); jq "(.packages[]|select(.name==\"vendor/seo\").version)=\"28.1.0\"" composer.lock > "$tmp" && mv "$tmp" composer.lock
+    tmp=$(mktemp); jq ".require[\"vendor/seo\"]=\">28.0.0,<29.0.0\"" composer.json > "$tmp" && mv "$tmp" composer.json
+    ;;
+esac
+exit 0'
+ensure_semver_vendor "$PWD"
+export PACKAGES="vendor/seo"
+run_update '[{"package":"vendor/seo","affected":"<=28.0"}]'
+assert_eq "$(json_constraint vendor/seo)" ">28.0.0,<29.0.0" "range restored when normalization fails"
+assert_eq "$(get_lock_version vendor/seo composer.lock)" "28.1.0" "the fix itself is retained"
+assert_contains "$RUN_LOG" "could not normalize vendor/seo" "warned about the failed normalization"
+
+echo "=================================================================="
 echo "(E) a lockfile that fails composer validate is reverted, no PR"
 echo "=================================================================="
 new_project \

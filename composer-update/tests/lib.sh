@@ -11,6 +11,14 @@
 ACTION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="$ACTION_DIR/scripts"
 
+# PATH as it stands before any new_project prepends a fake-composer shim.
+# ensure_semver_vendor needs the REAL composer to build its vendor cache; once
+# a test has called new_project, a bare `composer` resolves to the shim, which
+# writes no vendor dir — leaving the PHP helpers to fail with "vendor/autoload
+# .php not found" and the advisory-aware assertions to fail for a reason that
+# looks nothing like the actual cause.
+_ORIGINAL_PATH="$PATH"
+
 _tests=0
 _fails=0
 
@@ -153,7 +161,15 @@ ensure_semver_vendor() {
   local cache="${TMPDIR:-/tmp}/composer-update-test-semver"
   if [ ! -f "$cache/vendor/autoload.php" ]; then
     mkdir -p "$cache"
-    ( cd "$cache" && composer require composer/semver --no-interaction --quiet >/dev/null 2>&1 )
+    ( cd "$cache" && PATH="$_ORIGINAL_PATH" composer require composer/semver \
+        --no-interaction --quiet >/dev/null 2>&1 )
+  fi
+  if [ ! -f "$cache/vendor/autoload.php" ]; then
+    # Fail loudly. A missing bootstrap otherwise surfaces as several unrelated
+    # -looking assertion failures further down the suite.
+    _fails=$((_fails + 1))
+    _red "  FAIL: could not bootstrap composer/semver into $cache (needs network + a real composer)"
+    return 1
   fi
   mkdir -p "$target"
   cp -R "$cache/vendor" "$target/vendor"
