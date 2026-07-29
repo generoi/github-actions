@@ -36,6 +36,58 @@ assert_eq "$(build_widen_arg vendor/a)" "vendor/a" "non-tilde constraint -> bare
 echo '{"vendor/a":">1.0.271,<1.1.0"}' > "$CON"
 assert_eq "$(build_widen_arg vendor/a)" "vendor/a:>1.0.271,<2.0.0" "inclusive-bound range widens to major-capped range"
 
+echo "== normalize_widen_constraint =="
+# The precision guard consults is_still_vulnerable, which shells out to PHP +
+# composer/semver against the CWD's vendor dir. Stub it here so these stay
+# pure unit tests; the real wiring is covered end-to-end in
+# update-orchestration.test.sh. Stub semantics: vendor/seo is affected <=28.0.
+_real_is_still_vulnerable=$(declare -f is_still_vulnerable)
+is_still_vulnerable() {
+  case "$1:$2" in
+    vendor/seo:28.0.0) echo yes ;;
+    *) echo no ;;
+  esac
+}
+
+# The headline case: Yoast's `<=28.0` advisory. Author wrote `^27.6`, so the
+# 2-part precision is preserved and the raw range becomes `^28.1`.
+assert_eq "$(normalize_widen_constraint '>28.0.0,<29.0.0' '^27.6' '28.1.0' vendor/seo)" \
+  "^28.1" "raw range + 2-part author style -> ^28.1"
+# Precision guard: same author style, but the fix shipped as a PATCH. `^28.0`
+# would mean >=28.0.0 and re-admit the vulnerable 28.0.0, so we must keep the
+# third segment.
+assert_eq "$(normalize_widen_constraint '>28.0.0,<29.0.0' '^27.6' '28.0.1' vendor/seo)" \
+  "^28.0.1" "precision guard: reduced caret would re-admit the advisory"
+# 4-segment hotfix (the `<=1.0.271` -> 1.0.271.1 case build_widen_arg exists for).
+assert_eq "$(normalize_widen_constraint '>1.0.271,<2.0.0' '^1.0' '1.0.271.1' vendor/x)" \
+  "^1.0" "4-segment hotfix, author style honored when floor is safe"
+# No style signal (author had a range/pin) -> full resolved precision.
+assert_eq "$(normalize_widen_constraint '>6.6.3,<7.0.0' '>=6.0' '6.7.2' vendor/x)" \
+  "^6.7.2" "no caret/tilde to imitate -> full resolved version"
+assert_eq "$(normalize_widen_constraint '>27.0.0,<28.0.0' '^27.6.1' '28.1.0' vendor/x)" \
+  "^28.1.0" "3-part author style preserved"
+# Already-idiomatic constraints are left alone — nothing to normalize.
+assert_eq "$(normalize_widen_constraint '^27.1.2' '^26.0' '27.6.0' vendor/x)" \
+  "" "caret written by the ~min_safe path -> no rewrite"
+assert_eq "$(normalize_widen_constraint '~27.1.2' '^26.0' '27.1.2' vendor/x)" \
+  "" "tilde -> no rewrite"
+assert_eq "$(normalize_widen_constraint '10.0.2' '10.0.1' '10.0.2' vendor/x)" \
+  "" "exact pin is a deliberate choice -> no rewrite"
+assert_eq "$(normalize_widen_constraint '' '^1.0' '1.2.3' vendor/x)" \
+  "" "empty written constraint -> no rewrite"
+# Non-numeric resolution (dev-*) has no caret to anchor to. update.sh reverts
+# these anyway; belt and braces.
+assert_eq "$(normalize_widen_constraint '>1.0.0,<2.0.0' '^1.0' 'dev-trunk' vendor/x)" \
+  "" "dev-* resolution -> no rewrite"
+# Composer locks tag-style releases with a leading v; constraints omit it.
+assert_eq "$(normalize_widen_constraint '>1.0.0,<2.0.0' '^1.0' 'v1.2.3' vendor/x)" \
+  "^1.2" "leading v stripped from the resolved version"
+# Author precision deeper than the resolved version clamps instead of padding.
+assert_eq "$(normalize_widen_constraint '>27.0.0,<29.0.0' '^27.6.1' '28.1' vendor/x)" \
+  "^28.1" "author precision clamped to the resolved segment count"
+
+eval "$_real_is_still_vulnerable"
+
 echo "== loosen_constraint (#28) =="
 assert_eq "$(loosen_constraint '~6.6.4')"  ">=6.6.4,<7.0.0"   "~6.6.4 -> same-major loose range"
 assert_eq "$(loosen_constraint '~10.5.3')" ">=10.5.3,<11.0.0" "~10.5.3 -> >=10.5.3,<11.0.0"

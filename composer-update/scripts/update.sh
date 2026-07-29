@@ -230,6 +230,9 @@ else
     fi
 
     BEFORE_REQUIRE_V=$(get_lock_version "$PACKAGE" /tmp/composer-update-pre-require.lock)
+    # The constraint the project author wrote, captured before composer
+    # overwrites it — normalize_widen_constraint reads it for style/precision.
+    PRE_REQUIRE_CONSTRAINT=$(jq -r --arg p "$PACKAGE" '(.require // {})[$p] // (.["require-dev"] // {})[$p] // ""' composer.json)
     PKG_ARG=$(build_widen_arg "$PACKAGE")
 
     echo "  widening: composer require $REQUIRE_FLAGS $PKG_ARG"
@@ -272,6 +275,47 @@ else
       echo "::warning::composer require on $PACKAGE — reverting: $REVERT_REASON"
       cp /tmp/composer-update-pre-require.json composer.json
       cp /tmp/composer-update-pre-require.lock composer.lock
+      continue
+    fi
+
+    # The widen succeeded — but for inclusive-bound advisories the constraint
+    # composer just wrote is our raw resolution range (`>28.0.0,<29.0.0`),
+    # not something a human would author. Re-require at the idiomatic caret
+    # anchored to the version resolution actually landed on, so composer.json
+    # keeps declaring intent rather than an advisory artifact.
+    #
+    # Re-running `composer require` (rather than editing the JSON directly)
+    # keeps composer the sole writer of composer.json: it preserves the file's
+    # existing formatting and key order, and refreshes the lock's content-hash
+    # in the same pass. Editing with jq would reformat the whole manifest and
+    # bury the one-line fix in an unreviewable diff.
+    NORMALIZED=$(normalize_widen_constraint \
+      "$NEW_CONSTRAINT" "$PRE_REQUIRE_CONSTRAINT" "$AFTER_REQUIRE_V" "$PACKAGE")
+    if [ -n "$NORMALIZED" ]; then
+      echo "  normalizing constraint: $PACKAGE $NEW_CONSTRAINT → $NORMALIZED"
+      cp composer.json /tmp/composer-update-pre-normalize.json
+      cp composer.lock /tmp/composer-update-pre-normalize.lock
+
+      NORMALIZE_OK=yes
+      composer require $REQUIRE_FLAGS "$PACKAGE:$NORMALIZED" \
+        --no-interaction --no-scripts 2>&1 || NORMALIZE_OK=no
+
+      # Accept the rewrite only if composer recorded exactly the constraint we
+      # asked for AND the lock still sits on a non-vulnerable version. The
+      # caret is a subset of the range that already resolved, so this should
+      # always hold — but a normalization that changes which version ships is
+      # not a formatting change, and we'd rather keep an ugly-but-correct
+      # range than quietly alter the fix.
+      NORMALIZED_CONSTRAINT=$(jq -r --arg p "$PACKAGE" '(.require // {})[$p] // (.["require-dev"] // {})[$p] // ""' composer.json)
+      NORMALIZED_V=$(get_lock_version "$PACKAGE" composer.lock)
+      if [ "$NORMALIZE_OK" != "yes" ] \
+        || [ "$NORMALIZED_CONSTRAINT" != "$NORMALIZED" ] \
+        || [ -z "$NORMALIZED_V" ] \
+        || [ "$(is_still_vulnerable "$PACKAGE" "$NORMALIZED_V")" = "yes" ]; then
+        echo "::warning::could not normalize $PACKAGE to $NORMALIZED — keeping $NEW_CONSTRAINT"
+        cp /tmp/composer-update-pre-normalize.json composer.json
+        cp /tmp/composer-update-pre-normalize.lock composer.lock
+      fi
     fi
   done
 
