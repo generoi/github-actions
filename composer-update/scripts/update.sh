@@ -49,6 +49,16 @@ jq -r '
   "\($child) \($p.name)"
 ' composer.lock > /tmp/composer-update-reverse.txt
 
+# Packages locked to a dev-* reference. Composer will not move these during a
+# partial update unless they are named explicitly, so find_direct_ancestors
+# surfaces any it crosses — otherwise a dev-locked intermediate silently pins
+# the chain and the update fails with an unrelated-looking conflict.
+jq -r '
+  ((.packages // []) + (."packages-dev" // []))[]
+  | select(.version | test("^dev-|-dev$"))
+  | .name
+' composer.lock > /tmp/composer-update-devlocked.txt
+
 
 # Step 1: Try composer update (stays within existing constraints).
 # `-W` (--with-all-dependencies) lets composer also update packages that

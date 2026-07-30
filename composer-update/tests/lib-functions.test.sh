@@ -97,6 +97,8 @@ assert_eq "$(loosen_constraint '^1.0.0')"  ""                 "caret -> empty"
 assert_eq "$(loosen_constraint '>1.0.271,<1.1.0')" ">1.0.271,<2.0.0" "inclusive-bound range -> major-capped"
 
 echo "== find_direct_ancestors (#22, #26) =="
+DEVLOCKED=/tmp/composer-update-devlocked.txt
+: > "$DEVLOCKED"
 printf 'roots/wordpress\nvendor/x\n' > "$DIRECT"
 printf 'roots/wordpress-no-content roots/wordpress\n' > "$REVERSE"
 assert_eq "$(find_direct_ancestors roots/wordpress)" "roots/wordpress" "a direct dep returns itself"
@@ -106,6 +108,28 @@ printf 'c\n' > "$DIRECT"
 printf 'a b\nb c\n' > "$REVERSE"
 assert_eq "$(find_direct_ancestors a)" "c" "multi-level BFS resolves to nearest direct ancestor"
 assert_eq "$(find_direct_ancestors unknown)" "" "no ancestor -> empty (no error under pipefail)"
+
+# Dev-locked intermediates must be named too: composer will not move a package
+# pinned to a dev-* reference during a partial update unless it is listed, so
+# returning only the direct-dep ancestor leaves the chain stuck. This is the
+# maptilat case — composer/composer under wp-cli/wp-cli (dev-main) under the
+# direct dep wp-cli/wp-cli-bundle.
+printf 'wp-cli/wp-cli-bundle\n' > "$DIRECT"
+printf 'composer/composer wp-cli/wp-cli\nwp-cli/wp-cli wp-cli/wp-cli-bundle\n' > "$REVERSE"
+: > "$DEVLOCKED"
+assert_eq "$(find_direct_ancestors composer/composer | tr '\n' ' ')" "wp-cli/wp-cli-bundle " \
+  "no dev-locked set -> ancestor only (unchanged behaviour)"
+printf 'wp-cli/wp-cli\n' > "$DEVLOCKED"
+assert_eq "$(find_direct_ancestors composer/composer | tr '\n' ' ')" "wp-cli/wp-cli wp-cli/wp-cli-bundle " \
+  "dev-locked intermediate is surfaced alongside the direct ancestor"
+# The intermediate must not terminate the walk — the direct dep is still needed.
+assert_contains "$(find_direct_ancestors composer/composer)" "wp-cli/wp-cli-bundle" \
+  "dev-locked intermediate does not stop the BFS"
+# The target itself being dev-locked must not duplicate it; build_pkg_arg emits it.
+printf 'composer/composer\nwp-cli/wp-cli\n' > "$DEVLOCKED"
+assert_eq "$(find_direct_ancestors composer/composer | grep -c '^composer/composer$')" "0" \
+  "target is never echoed as its own ancestor"
+: > "$DEVLOCKED"
 
 echo "== expand_args_for (#26) =="
 echo '{"roots/wordpress-no-content":"~6.8.5"}' > "$CON"
