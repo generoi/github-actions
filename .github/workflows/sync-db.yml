@@ -37,7 +37,13 @@ jobs:
         run: composer install:development
 
       - name: Add remote public keys to known hosts
-        run: ssh-keyscan -p $(./vendor/bin/robo config env.@production.port || echo 22) $(./vendor/bin/robo config env.@production.host) >> ~/.ssh/known_hosts
+        # Read robo.yml directly rather than shelling out to `robo`, which
+        # prints PHP deprecation notices on stdout that command substitution
+        # would feed to ssh-keyscan as hostnames. Matches deploy.yml.
+        run: |
+          ssh-keyscan \
+            -p $(yq '.env["@production"].port // 22' robo.yml) \
+            $(yq '.env["@production"].host' robo.yml) >> ~/.ssh/known_hosts
 
       - name: Setup DDEV
         uses: generoi/github-actions/setup-ddev@v1
