@@ -8,6 +8,7 @@
 #   /tmp/composer-update-constraints.json  (build_pkg_arg, build_widen_arg)
 #   /tmp/composer-update-direct.txt         (find_direct_ancestors, expand_args_for)
 #   /tmp/composer-update-reverse.txt        (find_direct_ancestors)
+#   /tmp/composer-update-devlocked.txt      (find_direct_ancestors)
 #   /tmp/composer-update-vulns.json         (is_still_vulnerable)
 # and $GITHUB_ACTION_PATH for the PHP helpers.
 
@@ -141,6 +142,22 @@ normalize_widen_constraint() {
 # Find direct-dep ancestor(s) of a package by BFS through the reverse
 # map. Returns one ancestor per line. If the package is itself a
 # direct dep, returns just that name. (#22, #26)
+#
+# Also returns any INTERMEDIATE crossed on the way up that is locked to a
+# dev-* reference. Composer will not move a package pinned to a dev branch
+# during a partial update unless that package is named explicitly — listing
+# only the direct-dep ancestor leaves it fixed at its locked commit and the
+# whole update fails. maptilat hit exactly this: composer/composer was
+# flagged, its direct ancestor is wp-cli/wp-cli-bundle, but the intermediate
+# wp-cli/wp-cli sat on dev-main, so every attempt died with
+#
+#   wp-cli/wp-cli dev-main requires wp-cli/php-cli-tools ~0.13.0 -> found
+#   wp-cli/php-cli-tools[v0.13.0] but these were not loaded, likely because
+#   it conflicts with another require.
+#
+# and the scanner reported the CVE daily with no fixable PR to offer. Same
+# family as the roots/wordpress-no-content self.version case above: the arg
+# list has to name every package that must be free to move.
 find_direct_ancestors() {
   local target="$1"
   local seen="|"
@@ -156,6 +173,13 @@ find_direct_ancestors() {
       result="$result $current"
       continue
     fi
+    # A dev-locked intermediate cannot move unless named, so surface it too.
+    # It is NOT terminal: keep walking up to the direct dep as well.
+    if [ "$current" != "$target" ] && [ -s /tmp/composer-update-devlocked.txt ] \
+      && grep -qFx "$current" /tmp/composer-update-devlocked.txt; then
+      result="$result $current"
+    fi
+
     local parents
     parents=$(awk -v t="$current" '$1 == t {print $2}' /tmp/composer-update-reverse.txt)
     if [ -n "$parents" ]; then
