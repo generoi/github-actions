@@ -156,21 +156,45 @@ json_constraint() {
 # ensure_semver_vendor <dir> — make `$dir/vendor/autoload.php` provide
 # composer/semver (what the PHP helpers require via getcwd()/vendor). Cached in
 # a shared location so we only hit the network once per test run.
+# True when the cached vendor dir can actually autoload composer/semver — not
+# merely when autoload.php is present. Existence is too weak a test: an
+# interrupted `composer require` can leave autoload.php and vendor/composer/
+# behind WITHOUT vendor/composer/ClassLoader.php, and that tree is unusable.
+_semver_cache_ok() {
+  local c="$1"
+  [ -f "$c/vendor/autoload.php" ] || return 1
+  ( cd "$c" && PATH="$_ORIGINAL_PATH" php -r \
+      'require "vendor/autoload.php"; exit(class_exists("Composer\\Semver\\Semver") ? 0 : 1);' \
+  ) >/dev/null 2>&1
+}
+
 ensure_semver_vendor() {
   local target="$1"
   local cache="${TMPDIR:-/tmp}/composer-update-test-semver"
-  if [ ! -f "$cache/vendor/autoload.php" ]; then
+
+  # The old guard checked only that autoload.php existed. A partial cache
+  # therefore satisfied it forever: every run copied a broken autoloader into
+  # the test project, the PHP helpers fatally errored on the missing
+  # ClassLoader, and their non-JSON output surfaced as
+  #   jq: parse error: Invalid numeric literal at line 2, column 8
+  # which points nowhere near the real cause. Three of six test files were red
+  # on master because of this. Verify the cache WORKS, and rebuild from scratch
+  # if it does not — never on top of a partial tree.
+  if ! _semver_cache_ok "$cache"; then
+    rm -rf "$cache"
     mkdir -p "$cache"
     ( cd "$cache" && PATH="$_ORIGINAL_PATH" composer require composer/semver \
         --no-interaction --quiet >/dev/null 2>&1 )
   fi
-  if [ ! -f "$cache/vendor/autoload.php" ]; then
+
+  if ! _semver_cache_ok "$cache"; then
     # Fail loudly. A missing bootstrap otherwise surfaces as several unrelated
     # -looking assertion failures further down the suite.
     _fails=$((_fails + 1))
-    _red "  FAIL: could not bootstrap composer/semver into $cache (needs network + a real composer)"
+    _red "  FAIL: could not bootstrap a working composer/semver into $cache (needs network + a real composer)"
     return 1
   fi
+
   mkdir -p "$target"
   cp -R "$cache/vendor" "$target/vendor"
 }
