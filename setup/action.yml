@@ -69,10 +69,22 @@ runs:
         restore-keys: |
           ${{ runner.os }}-composer-php${{ env.PHP_VERSION }}-
 
-    # No `vendor` cache on purpose: with the download cache above warm, composer
-    # install rebuilds vendor from local zips in seconds, so caching the result
-    # too only adds upload time — and a restored vendor can carry a stale
-    # autoloader into the run.
+    # Restoring vendor is worth it: rebuilding it from the download cache costs
+    # ~18s on a Bedrock project, against ~8s to save and ~2s to restore (measured
+    # in #44, which removed this and made test runs slower).
+    #
+    # Safe despite caching a build artefact: the key is exact — no restore-keys —
+    # so a hit means composer.lock is byte-identical, and every caller runs
+    # `composer install` straight after, which reconciles vendor against the lock
+    # via installed.json and re-dumps the autoloader from the current
+    # composer.json. Don't add restore-keys: a prefix hit would restore a vendor
+    # built from a different lock, leaving composer to reconcile a delta.
+    - name: Composer vendor cache
+      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+      with:
+        path: vendor
+        key: ${{ runner.os }}-vendor-php${{ env.PHP_VERSION }}-${{ hashFiles('**/composer.lock') }}
+
     - name: Node modules cache
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:

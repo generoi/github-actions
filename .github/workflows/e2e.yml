@@ -23,24 +23,13 @@ jobs:
           cache: 'npm'
           cache-dependency-path: '**/package-lock.json'
 
-      # `npm run e2e:install` reinstalls node_modules and re-downloads the
-      # Playwright browsers on every run. Cache both: the browsers keyed loosely
-      # so a dependency bump falls back to the previous set and `playwright
-      # install` only fetches what actually changed.
-      - name: Node modules cache
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
-        with:
-          path: '**/node_modules'
-          key: ${{ runner.os }}-node-modules-${{ hashFiles('**/package-lock.json') }}
-
-      - name: Playwright browser cache
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-
-
+      # Deliberately no node_modules or ~/.cache/ms-playwright cache here. Both
+      # were tried (#44) and measured slower: the four cache steps cost ~30-40s
+      # of restore/save to move ~130 MB, while the Chromium download they replace
+      # takes ~5s from Playwright's CDN. The node_modules cache made it worse
+      # still — the key is seeded by setup's full-workspace install, but this job
+      # runs `npm install --workspaces=false`, so npm prunes a tree it doesn't
+      # want. tammet's e2e job: 44-56s before, 95-98s after.
       - name: Install dependencies
         timeout-minutes: 5
         run: npm run e2e:install
