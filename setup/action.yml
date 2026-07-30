@@ -41,6 +41,9 @@ runs:
         # Pin Composer to a release that includes the fix for GHSA-f9f8-rm49-7jv2
         # (GITHUB_TOKEN disclosure in Composer's GitHub Actions log output).
         tools: composer:2.9.8
+        # No coverage driver: nothing here measures coverage, and an active
+        # xdebug slows every PHP process it loads into, composer included.
+        coverage: none
       env:
         COMPOSER_TOKEN: ${{ inputs.packagist_github_token }}
 
@@ -66,12 +69,10 @@ runs:
         restore-keys: |
           ${{ runner.os }}-composer-php${{ env.PHP_VERSION }}-
 
-    - name: Composer vendor cache
-      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
-      with:
-        path: vendor
-        key: ${{ runner.os }}-vendor-php${{ env.PHP_VERSION }}-${{ hashFiles('**/composer.lock') }}
-
+    # No `vendor` cache on purpose: with the download cache above warm, composer
+    # install rebuilds vendor from local zips in seconds, so caching the result
+    # too only adds upload time — and a restored vendor can carry a stale
+    # autoloader into the run.
     - name: Node modules cache
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:

@@ -15,6 +15,13 @@ on:
       ssh_known_hosts:
         type: string
         default: ''
+      run_tests:
+        type: boolean
+        default: true
+        description: >
+          Re-run composer test before deploying. Defaults to true; set false in
+          repos where the ref being deployed has already passed CI: Test, to skip
+          the test run and the npm install that only exists to feed it.
     secrets:
       DEPLOY_SSH_PRIVATE_KEY:
         required: true
@@ -46,10 +53,14 @@ jobs:
           packagist_github_token: ${{ secrets.PACKAGIST_GITHUB_TOKEN }}
           yoast_license_token: ${{ secrets.YOAST_LICENSE_TOKEN }}
 
-      - name: Install dependencies for testing
-        run: |
-          composer install --no-interaction
-          npm install
+      # Composer is always needed — dep and robo live in vendor/bin. npm is only
+      # needed because composer test lints the front end, so it follows run_tests.
+      - name: Install Composer dependencies
+        run: composer install --no-interaction
+
+      - name: Install npm dependencies
+        if: inputs.run_tests
+        run: npm install
 
       - name: Configure SSH
         if: inputs.ssh_config != ''
@@ -74,6 +85,7 @@ jobs:
           fi
 
       - name: Run tests
+        if: inputs.run_tests
         run: composer test --no-interaction
 
       - name: Deploy

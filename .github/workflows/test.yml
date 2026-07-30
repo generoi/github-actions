@@ -29,6 +29,14 @@ on:
       YOAST_LICENSE_TOKEN:
         required: false
 
+# Superseded pushes to the same ref are worthless — a full test run is ~4
+# minutes, so let a newer push cancel the one it replaces. Keyed by repository
+# because this workflow is shared: github.repository and github.ref both refer
+# to the calling repo.
+concurrency:
+  group: test-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Run tests
