@@ -52,6 +52,21 @@ jobs:
       smoke_grep: 'app/themes/gds/public/scripts/app.js'
 ```
 
+### Scheduling the nightly scan
+
+`vulnerability-scan.yml` does not sleep to spread load — runner time is billed,
+so the stagger belongs in the cron expression, which is free. **Give each repo
+its own minute** (and ideally its own hour) rather than copying `5 4 * * *`:
+
+```yaml
+on:
+  schedule:
+    - cron: '17 3 * * *' # unique per repo
+```
+
+Sharing one minute across repos means every scan hits the advisory and GitHub
+APIs simultaneously, and GitHub also delays runs scheduled on popular minutes.
+
 ## Versioning
 
 Projects pin to the major tag (`@v1`). Patch updates are automatic.
