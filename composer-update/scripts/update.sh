@@ -79,7 +79,7 @@ for PACKAGE in $PACKAGES; do
 done
 echo "Trying: composer update -W ${BULK_ARGS[*]}"
 UPDATE_EXIT=0
-composer update -W "${BULK_ARGS[@]}" --no-interaction --no-scripts 2>&1 || UPDATE_EXIT=$?
+composer update -W "${BULK_ARGS[@]}" --no-interaction --no-scripts --no-install 2>&1 || UPDATE_EXIT=$?
 if [ "$UPDATE_EXIT" -ne 0 ]; then
   echo "::warning::bulk composer update exited with code $UPDATE_EXIT — will retry per package"
 fi
@@ -107,7 +107,7 @@ for PACKAGE in $PACKAGES; do
     [ -n "$arg" ] && RETRY_ARGS+=("$arg")
   done < <(expand_args_for "$PACKAGE")
   echo "  retrying per-package (tight): composer update -W ${RETRY_ARGS[*]}"
-  composer update -W "${RETRY_ARGS[@]}" --no-interaction --no-scripts 2>&1 || true
+  composer update -W "${RETRY_ARGS[@]}" --no-interaction --no-scripts --no-install 2>&1 || true
   RETRY_V=$(get_lock_version "$PACKAGE" composer.lock)
   if [ -n "$RETRY_V" ] && [ "$BEFORE_V" != "$RETRY_V" ]; then
     continue
@@ -140,7 +140,7 @@ for PACKAGE in $PACKAGES; do
     cp composer.lock /tmp/composer-update-pre-loose.lock
 
     echo "  retrying per-package (loose): composer update -W ${LOOSE_ARGS[*]}"
-    composer update -W "${LOOSE_ARGS[@]}" --no-interaction --no-scripts 2>&1 || true
+    composer update -W "${LOOSE_ARGS[@]}" --no-interaction --no-scripts --no-install 2>&1 || true
     LOOSE_V=$(get_lock_version "$PACKAGE" composer.lock)
     if [ -n "$LOOSE_V" ] && [ "$BEFORE_V" != "$LOOSE_V" ]; then
       if [ "$(is_still_vulnerable "$PACKAGE" "$LOOSE_V")" = "no" ]; then
@@ -246,7 +246,7 @@ else
     PKG_ARG=$(build_widen_arg "$PACKAGE")
 
     echo "  widening: composer require $REQUIRE_FLAGS $PKG_ARG"
-    composer require $REQUIRE_FLAGS "$PKG_ARG" --no-interaction --no-scripts 2>&1 || true
+    composer require $REQUIRE_FLAGS "$PKG_ARG" --no-interaction --no-scripts --no-install 2>&1 || true
 
     NEW_CONSTRAINT=$(jq -r --arg p "$PACKAGE" '(.require // {})[$p] // (.["require-dev"] // {})[$p] // ""' composer.json)
     AFTER_REQUIRE_V=$(get_lock_version "$PACKAGE" composer.lock)
@@ -308,7 +308,7 @@ else
 
       NORMALIZE_OK=yes
       composer require $REQUIRE_FLAGS "$PACKAGE:$NORMALIZED" \
-        --no-interaction --no-scripts 2>&1 || NORMALIZE_OK=no
+        --no-interaction --no-scripts --no-install 2>&1 || NORMALIZE_OK=no
 
       # Accept the rewrite only if composer recorded exactly the constraint we
       # asked for AND the lock still sits on a non-vulnerable version. The
