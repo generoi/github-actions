@@ -34,6 +34,25 @@ inputs:
 runs:
   using: 'composite'
   steps:
+    # Hash the lock files ONCE, before any cache is restored.
+    #
+    # These keys used to embed hashFiles() directly, and that glob walks whatever
+    # is in the workspace at the time — including a restored vendor/. Some
+    # composer packages ship a package-lock.json, so the node_modules key came
+    # out differently depending on whether the vendor cache had hit:
+    #
+    #   vendor miss -> Linux-node-modules-589366ea...
+    #   vendor hit  -> Linux-node-modules-c843c104...
+    #
+    # Same commit, two keys, so that repo's node_modules cache could never hit
+    # and its 188 MiB entries were dead weight. Computing the hashes here, off
+    # the bare checkout, makes every key independent of restore order.
+    - name: Compute cache keys
+      shell: bash
+      run: |
+        echo "COMPOSER_LOCK_HASH=${{ hashFiles('**/composer.lock') }}" >> "$GITHUB_ENV"
+        echo "NPM_LOCK_HASH=${{ hashFiles('**/package-lock.json') }}" >> "$GITHUB_ENV"
+
     - name: Setup Node
       uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
       # No `cache: 'npm'` on purpose: the "Node modules cache" step below caches
@@ -99,7 +118,7 @@ runs:
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: vendor
-        key: ${{ runner.os }}-vendor-php${{ env.PHP_VERSION }}-${{ inputs.composer_dev == 'false' && 'nodev' || 'dev' }}-${{ hashFiles('**/composer.lock') }}
+        key: ${{ runner.os }}-vendor-php${{ env.PHP_VERSION }}-${{ inputs.composer_dev == 'false' && 'nodev' || 'dev' }}-${{ env.COMPOSER_LOCK_HASH }}
 
     # ~288 MB and ~11s to restore — the most expensive entry here. Both caches
     # key on the composer.lock hash, so they hit and miss together; this one
@@ -115,7 +134,7 @@ runs:
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: ${{ steps.composer-cache.outputs.dir }}
-        key: ${{ runner.os }}-composer-php${{ env.PHP_VERSION }}-${{ hashFiles('**/composer.lock') }}
+        key: ${{ runner.os }}-composer-php${{ env.PHP_VERSION }}-${{ env.COMPOSER_LOCK_HASH }}
         restore-keys: |
           ${{ runner.os }}-composer-php${{ env.PHP_VERSION }}-
 
@@ -123,4 +142,4 @@ runs:
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: '**/node_modules'
-        key: ${{ runner.os }}-node-modules-${{ hashFiles('**/package-lock.json') }}
+        key: ${{ runner.os }}-node-modules-${{ env.NPM_LOCK_HASH }}
