@@ -33,10 +33,6 @@ runs:
         mysql -e "CREATE USER 'db'@'localhost' IDENTIFIED BY 'db';" -uroot -proot
         mysql -e "GRANT ALL PRIVILEGES ON db.* TO 'db'@'localhost' WITH GRANT OPTION;" -uroot -proot
 
-    - name: Launch web server
-      shell: bash
-      run: ./vendor/bin/wp server &
-
     - name: Setup .env
       shell: bash
       run: |
@@ -64,6 +60,36 @@ runs:
             echo "${KEY}=${VALUE}" >> .env
           fi
         done <<< "$ENV_VARS"
+
+    # Must run AFTER .env exists. `wp server` bootstraps WordPress, which needs
+    # DB credentials — started any earlier it binds port 8080, prints "started",
+    # then dies as soon as it tries to boot. The caller's retry loop cannot catch
+    # that: it waits for the server to come UP, and it briefly does. The failure
+    # then surfaces several steps later as a bare curl exit 7.
+    - name: Launch web server
+      shell: bash
+      run: |
+        # nohup + disown so the server survives this step's shell exiting.
+        nohup ./vendor/bin/wp server > /tmp/wp-server.log 2>&1 &
+        echo $! > /tmp/wp-server.pid
+        disown || true
+
+        # Verify it is actually accepting connections before this step returns,
+        # so a dead server fails HERE with its log rather than downstream.
+        # Plain connectivity, not -f: before `wp core install` the site legitimately
+        # redirects to the installer, and a 3xx must not count as failure.
+        for i in $(seq 1 30); do
+          if curl -s -o /dev/null http://localhost:8080/ 2>/dev/null; then
+            echo "Web server responding after ${i}s"
+            exit 0
+          fi
+          sleep 1
+        done
+
+        echo "::error::Web server never came up on :8080"
+        echo "--- wp server output ---"
+        cat /tmp/wp-server.log || true
+        exit 1
 
     - name: Install WordPress
       if: ${{ inputs.multisite != 'true' }}

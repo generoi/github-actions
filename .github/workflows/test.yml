@@ -75,14 +75,19 @@ jobs:
 
       - name: Load frontpage
         run: |
-          # Retry loop: wait for the web server to be ready (up to 30 seconds)
-          for i in $(seq 1 30); do
-            if curl -sSf -o /dev/null http://localhost:8080/ 2>/dev/null; then
-              break
+          # install-wordpress already waited for the server to accept connections,
+          # so reaching this step with nothing listening means it came up and then
+          # DIED — a different failure, and one the old retry loop reported as a
+          # bare curl exit 7 with no explanation. Say so, and show its output.
+          if ! curl -s -o /dev/null http://localhost:8080/ 2>/dev/null; then
+            echo "::error::Web server was up during install but is no longer listening"
+            if [ -f /tmp/wp-server.pid ] && ! kill -0 "$(cat /tmp/wp-server.pid)" 2>/dev/null; then
+              echo "wp server process $(cat /tmp/wp-server.pid) is gone"
             fi
-            echo "Waiting for web server... attempt $i/30"
-            sleep 1
-          done
+            echo "--- wp server output ---"
+            cat /tmp/wp-server.log || echo "(no log)"
+            exit 1
+          fi
 
           RESPONSE=$(curl -sSLf http://localhost:8080/)
           echo "$RESPONSE" > /tmp/frontpage.html
@@ -92,6 +97,12 @@ jobs:
         env:
           SMOKE_GREP: ${{ inputs.smoke_grep }}
         run: grep "$SMOKE_GREP" /tmp/frontpage.html
+
+      - name: Dump web server log
+        if: failure() || inputs.debug
+        run: |
+          echo "--- wp server output ---"
+          cat /tmp/wp-server.log || echo "(no log)"
 
       - name: Enable debugging
         if: failure() || inputs.debug
