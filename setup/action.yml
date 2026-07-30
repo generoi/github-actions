@@ -16,10 +16,11 @@ runs:
   steps:
     - name: Setup Node
       uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+      # No `cache: 'npm'` on purpose: the "Node modules cache" step below caches
+      # **/node_modules directly, and when that hits, npm install is a no-op and
+      # ~/.npm is never read.
       with:
         node-version-file: .nvmrc
-        cache: 'npm'
-        cache-dependency-path: '**/package-lock.json'
 
     - name: Authenticate with Fontawesome NPM repository
       shell: bash
