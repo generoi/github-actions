@@ -10,6 +10,26 @@ inputs:
     description: 'Optional Yoast Premium license token for my.yoast.com Composer repository'
     required: false
     default: ''
+  composer_dev:
+    description: >
+      Whether the caller installs dev dependencies into the workspace vendor/
+      ('true', the default) or passes --no-dev ('false'). It selects the vendor
+      cache key, because a vendor built without dev packages is not
+      interchangeable with one built with them — and the download-cache gate
+      below assumes a vendor hit means composer install has nothing to do.
+      Note that deployer's own --no-dev install happens in build_path, not the
+      workspace, so it does not affect this.
+    required: false
+    default: 'true'
+  composer_download_cache:
+    description: >
+      'always' (default) restores the Composer download cache unconditionally.
+      'on-vendor-miss' skips it when the vendor cache already hit, where
+      composer install is a no-op — worth ~11s a run. Deployments must keep
+      'always': deployer builds in a fresh build_path with no vendor, so it
+      needs the package zips even when the workspace vendor cache hit.
+    required: false
+    default: 'always'
 
 runs:
   using: 'composite'
@@ -61,14 +81,6 @@ runs:
       run: |
         echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
 
-    - name: Composer download cache
-      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
-      with:
-        path: ${{ steps.composer-cache.outputs.dir }}
-        key: ${{ runner.os }}-composer-php${{ env.PHP_VERSION }}-${{ hashFiles('**/composer.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-composer-php${{ env.PHP_VERSION }}-
-
     # Restoring vendor is worth it: rebuilding it from the download cache costs
     # ~18s on a Bedrock project, against ~8s to save and ~2s to restore (measured
     # in #44, which removed this and made test runs slower).
@@ -79,11 +91,33 @@ runs:
     # via installed.json and re-dumps the autoloader from the current
     # composer.json. Don't add restore-keys: a prefix hit would restore a vendor
     # built from a different lock, leaving composer to reconcile a delta.
+    #
+    # Restored before the download cache so that cache can be skipped when this
+    # one hits — see composer_download_cache.
     - name: Composer vendor cache
+      id: vendor-cache
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: vendor
-        key: ${{ runner.os }}-vendor-php${{ env.PHP_VERSION }}-${{ hashFiles('**/composer.lock') }}
+        key: ${{ runner.os }}-vendor-php${{ env.PHP_VERSION }}-${{ inputs.composer_dev == 'false' && 'nodev' || 'dev' }}-${{ hashFiles('**/composer.lock') }}
+
+    # ~288 MB and ~11s to restore — the most expensive entry here. Both caches
+    # key on the composer.lock hash, so they hit and miss together; this one
+    # carries restore-keys, so on a lock change it prefix-restores and hands
+    # composer nearly all the zips locally. That is when it earns its size.
+    #
+    # When the vendor cache hit, composer install is a no-op ("Nothing to
+    # install") and those 11s buy nothing, so callers whose install is a no-op
+    # in the steady state pass 'on-vendor-miss'. Skipping the step also skips
+    # its save, which is correct: nothing was downloaded.
+    - name: Composer download cache
+      if: inputs.composer_download_cache == 'always' || steps.vendor-cache.outputs.cache-hit != 'true'
+      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+      with:
+        path: ${{ steps.composer-cache.outputs.dir }}
+        key: ${{ runner.os }}-composer-php${{ env.PHP_VERSION }}-${{ hashFiles('**/composer.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-composer-php${{ env.PHP_VERSION }}-
 
     - name: Node modules cache
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
