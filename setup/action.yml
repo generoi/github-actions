@@ -68,6 +68,26 @@ runs:
       run: |
         npm config set "//npm.fontawesome.com/:_authToken" "$FONTAWESOME_TOKEN"
 
+    # npm install is the largest remaining cost in these jobs, and it is almost
+    # entirely the audit — a network round trip over the whole tree, on every run,
+    # even when node_modules was restored intact:
+    #
+    #   snellmanrecipes  up to date, audited 1716 packages in 48s
+    #   beamex           up to date, audited 1880 packages in 60s
+    #   kaskipuu         up to date, audited 1930 packages in 1m
+    #
+    # Measured locally on a 1250-package tree: 9s with audit, 1s without.
+    #
+    # Set as npm config rather than CLI flags so it applies to every npm call,
+    # including those inside projects' own composer scripts. Dependency
+    # vulnerabilities are covered by the nightly scan, which actually gates;
+    # npm's install-time audit output gates nothing.
+    - name: Configure npm for CI
+      shell: bash
+      run: |
+        npm config set audit false
+        npm config set fund false
+
     - name: Read PHP version from composer.json to env
       shell: bash
       run: |
