@@ -61,36 +61,6 @@ runs:
           fi
         done <<< "$ENV_VARS"
 
-    # Must run AFTER .env exists. `wp server` bootstraps WordPress, which needs
-    # DB credentials — started any earlier it binds port 8080, prints "started",
-    # then dies as soon as it tries to boot. The caller's retry loop cannot catch
-    # that: it waits for the server to come UP, and it briefly does. The failure
-    # then surfaces several steps later as a bare curl exit 7.
-    - name: Launch web server
-      shell: bash
-      run: |
-        # nohup + disown so the server survives this step's shell exiting.
-        nohup ./vendor/bin/wp server > /tmp/wp-server.log 2>&1 &
-        echo $! > /tmp/wp-server.pid
-        disown || true
-
-        # Verify it is actually accepting connections before this step returns,
-        # so a dead server fails HERE with its log rather than downstream.
-        # Plain connectivity, not -f: before `wp core install` the site legitimately
-        # redirects to the installer, and a 3xx must not count as failure.
-        for i in $(seq 1 30); do
-          if curl -s -o /dev/null http://localhost:8080/ 2>/dev/null; then
-            echo "Web server responding after ${i}s"
-            exit 0
-          fi
-          sleep 1
-        done
-
-        echo "::error::Web server never came up on :8080"
-        echo "--- wp server output ---"
-        cat /tmp/wp-server.log || true
-        exit 1
-
     - name: Install WordPress
       if: ${{ inputs.multisite != 'true' }}
       shell: bash
@@ -119,3 +89,44 @@ runs:
       env:
         PLUGINS: ${{ inputs.activate_plugins }}
       run: ./vendor/bin/wp plugin activate $PLUGINS
+
+    # Deliberately last. Every step above is wp-cli talking to the database, so
+    # none of them need an HTTP server — but `wp core install` pings the site's
+    # home URL, and if the server is already listening that request renders the
+    # theme against a WordPress with no plugins active yet. On any site whose
+    # theme calls a plugin function at render time (ACF's get_field(), say) that
+    # request dies with a fatal, and takes the single-worker built-in server with
+    # it. The run then fails several steps later at the frontpage check with the
+    # server simply gone.
+    #
+    # Starting it here closes that window: by the time anything can make a
+    # request, the site is installed and its plugins are active.
+    #
+    # It must also run AFTER .env exists — `wp server` bootstraps WordPress and
+    # needs DB credentials. Started before that it binds port 8080, prints
+    # "started", then dies as soon as it tries to boot, which the readiness loop
+    # below cannot catch because the server genuinely does come up first.
+    - name: Launch web server
+      shell: bash
+      run: |
+        # nohup + disown so the server survives this step's shell exiting.
+        nohup ./vendor/bin/wp server > /tmp/wp-server.log 2>&1 &
+        echo $! > /tmp/wp-server.pid
+        disown || true
+
+        # Verify it is actually accepting connections before this step returns,
+        # so a dead server fails HERE with its log rather than downstream.
+        # Plain connectivity rather than -f: a redirect is a perfectly good sign
+        # of life, and this should fail on "nothing listening", not on status.
+        for i in $(seq 1 30); do
+          if curl -s -o /dev/null http://localhost:8080/ 2>/dev/null; then
+            echo "Web server responding after ${i}s"
+            exit 0
+          fi
+          sleep 1
+        done
+
+        echo "::error::Web server never came up on :8080"
+        echo "--- wp server output ---"
+        cat /tmp/wp-server.log || true
+        exit 1
