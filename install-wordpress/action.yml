@@ -108,6 +108,24 @@ runs:
     # below cannot catch because the server genuinely does come up first.
     - name: Launch web server
       shell: bash
+      env:
+        # `wp server` wraps `php -S`, whose default is a SINGLE worker. Any
+        # request that makes an HTTP request back to the same server then
+        # deadlocks: the one worker is busy with the outer request, so the inner
+        # one is never accepted, and the outer blocks until max_execution_time
+        # kills it — taking the server down with it. WordPress does exactly this
+        # (REST preloading, loopback/site-health checks), so runs failed
+        # intermittently with
+        #   Fatal error: Maximum execution time of 30+2 seconds exceeded
+        #   (terminated) in .../wp-includes/rest-api.php
+        # and then "Web server never came up on :8080".
+        #
+        # Forking workers removes the deadlock. Reproduced minimally: a script
+        # that fetches itself hangs for the full max_execution_time and fatals
+        # with one worker, and returns 200 in 0.01s with four. wp-cli's server
+        # command calls proc_open() with a null env, so it inherits this and it
+        # reaches `php -S`.
+        PHP_CLI_SERVER_WORKERS: '4'
       run: |
         # nohup + disown so the server survives this step's shell exiting.
         nohup ./vendor/bin/wp server > /tmp/wp-server.log 2>&1 &
@@ -118,8 +136,13 @@ runs:
         # so a dead server fails HERE with its log rather than downstream.
         # Plain connectivity rather than -f: a redirect is a perfectly good sign
         # of life, and this should fail on "nothing listening", not on status.
+        #
+        # --max-time bounds each attempt. Without it, a server that accepts the
+        # connection but never answers makes curl block indefinitely, so this
+        # loop is not the ~30s it looks like and the error below misreports a
+        # hung server as one that never started.
         for i in $(seq 1 30); do
-          if curl -s -o /dev/null http://localhost:8080/ 2>/dev/null; then
+          if curl -s -o /dev/null --max-time 5 http://localhost:8080/ 2>/dev/null; then
             echo "Web server responding after ${i}s"
             exit 0
           fi
