@@ -6,6 +6,10 @@ on:
       url:
         required: true
         type: string
+    secrets:
+      NPM_FONTAWESOME_AUTH_TOKEN:
+        required: false
+        description: 'Fontawesome Pro npm token. Only needed when the ROOT install pulls @fortawesome packages; most repos keep them in a theme workspace, which `--workspaces=false` skips.'
 
 jobs:
   e2e:
@@ -30,6 +34,21 @@ jobs:
       # still — the key is seeded by setup's full-workspace install, but this job
       # runs `npm install --workspaces=false`, so npm prunes a tree it doesn't
       # want. tammet's e2e job: 44-56s before, 95-98s after.
+      # `e2e:install` runs `npm install --workspaces=false`, which normally skips
+      # the theme where @fortawesome lives. Some repos (kokkikartano.fi, mutti)
+      # have those packages in the ROOT tree instead, so the install reaches
+      # npm.fontawesome.com and 401s without a token.
+      #
+      # Guarded in the shell, not with `if:` — secrets.* is not available in step
+      # if: expressions inside a reusable workflow. Same pattern as the Yoast
+      # token in vulnerability-scan.yml.
+      - name: Authenticate with the Fontawesome npm registry
+        env:
+          FONTAWESOME_TOKEN: ${{ secrets.NPM_FONTAWESOME_AUTH_TOKEN }}
+        run: |
+          [ -n "$FONTAWESOME_TOKEN" ] || exit 0
+          npm config set "//npm.fontawesome.com/:_authToken" "$FONTAWESOME_TOKEN"
+
       - name: Install dependencies
         timeout-minutes: 5
         run: npm run e2e:install
