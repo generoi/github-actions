@@ -67,6 +67,27 @@ on:
 Sharing one minute across repos means every scan hits the advisory and GitHub
 APIs simultaneously, and GitHub also delays runs scheduled on popular minutes.
 
+### Which repos the cron actually scans
+
+The scheduled scan is gated on the repo's `maintenance` organization custom
+property. It runs only for `monthly`, `bi-monthly`, `quarterly` and
+`critical-only`; `hosted-only`, `none` and an **unset** property skip the run.
+
+That means adding the workflow to a repo is not enough — the repo also needs a
+`maintenance` value, or its nightly scan silently no-ops:
+
+```sh
+gh api repos/generoi/<repo>/properties/values \
+  --jq '.[] | select(.property_name == "maintenance") | .value'
+```
+
+Two deliberate escape hatches:
+
+- A manual `workflow_dispatch` **always** scans, whatever the tier.
+- If the property API call fails, the scan runs anyway. An untagged repo is a
+  visible state someone can fix; a transient 5xx is not, and it must never
+  silently skip a security scan.
+
 ## Versioning
 
 Projects pin to the major tag (`@v1`). Patch updates are automatic.
