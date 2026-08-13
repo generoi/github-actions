@@ -83,6 +83,37 @@ runs:
           --skip-config \
           --skip-email
 
+    # A loopback that stalls blocks the render until max_execution_time kills
+    # it, which surfaces as an unexplained 30s timeout deep inside whatever
+    # WordPress happened to be doing. Five seconds is generous for a request to
+    # localhost, and turns a stall into a fast, visible failure.
+    - name: Cap HTTP timeouts (CI only)
+      shell: bash
+      run: |
+        MU_DIR=$(./vendor/bin/wp eval 'echo WPMU_PLUGIN_DIR;' --skip-plugins --skip-themes 2>/dev/null || echo '')
+        if [ -z "$MU_DIR" ] || [ ! -d "$MU_DIR" ]; then
+          echo "::warning::could not resolve WPMU_PLUGIN_DIR, skipping HTTP timeout cap"
+          exit 0
+        fi
+        cat > "$MU_DIR/zz-ci-http-timeout.php" <<'PHP'
+        <?php
+
+        /**
+         * CI only: cap outbound HTTP so a stalled loopback fails fast instead of
+         * blocking the render until max_execution_time.
+         */
+        add_filter('http_request_timeout', function () {
+            return 5;
+        }, 999);
+
+        add_filter('http_request_args', function ($args) {
+            $args['timeout'] = min($args['timeout'] ?? 5, 5);
+
+            return $args;
+        }, 999);
+        PHP
+        echo "capped HTTP timeouts via $MU_DIR/zz-ci-http-timeout.php"
+
     - name: Activate plugins
       if: ${{ inputs.activate_plugins != '' }}
       shell: bash
@@ -125,7 +156,13 @@ runs:
         # with one worker, and returns 200 in 0.01s with four. wp-cli's server
         # command calls proc_open() with a null env, so it inherits this and it
         # reaches `php -S`.
-        PHP_CLI_SERVER_WORKERS: '4'
+        #
+        # Four is not much headroom: WordPress's loopbacks can nest, and a
+        # queued connection is never accepted, so php -S logs nothing at all —
+        # the absence of an "Accepted" line looks like "no request was made"
+        # when it actually means "no worker was free". Seen again on
+        # 2026-08-13. Idle forked workers cost almost nothing.
+        PHP_CLI_SERVER_WORKERS: '16'
       run: |
         # nohup + disown so the server survives this step's shell exiting.
         nohup ./vendor/bin/wp server > /tmp/wp-server.log 2>&1 &
