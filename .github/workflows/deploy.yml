@@ -21,7 +21,7 @@ on:
         description: >
           Re-run composer test before deploying. Defaults to true; set false in
           repos where the ref being deployed has already passed CI: Test, to skip
-          the test run and the npm install that only exists to feed it.
+          the test run and the node install that only exists to feed it.
     secrets:
       DEPLOY_SSH_PRIVATE_KEY:
         required: true
@@ -58,9 +58,16 @@ jobs:
       - name: Install Composer dependencies
         run: composer install --no-interaction
 
-      - name: Install npm dependencies
+      - name: Install node dependencies
         if: inputs.run_tests
-        run: npm install
+        shell: bash
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            corepack enable
+            pnpm install --frozen-lockfile
+          else
+            npm install
+          fi
 
       - name: Configure SSH
         if: inputs.ssh_config != ''

@@ -51,15 +51,25 @@ runs:
       shell: bash
       run: |
         echo "COMPOSER_LOCK_HASH=${{ hashFiles('**/composer.lock') }}" >> "$GITHUB_ENV"
-        echo "NPM_LOCK_HASH=${{ hashFiles('**/package-lock.json') }}" >> "$GITHUB_ENV"
+        if [ -f pnpm-lock.yaml ]; then
+          echo "NODE_PACKAGE_MANAGER=pnpm" >> "$GITHUB_ENV"
+          echo "NODE_LOCK_HASH=${{ hashFiles('pnpm-lock.yaml') }}" >> "$GITHUB_ENV"
+        else
+          echo "NODE_PACKAGE_MANAGER=npm" >> "$GITHUB_ENV"
+          echo "NODE_LOCK_HASH=${{ hashFiles('**/package-lock.json') }}" >> "$GITHUB_ENV"
+        fi
 
     - name: Setup Node
       uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
-      # No `cache: 'npm'` on purpose: the "Node modules cache" step below caches
-      # **/node_modules directly, and when that hits, npm install is a no-op and
-      # ~/.npm is never read.
+      # No `cache:` on purpose: the "Node modules cache" step below caches
+      # **/node_modules directly, and when that hits, install is a no-op.
       with:
         node-version-file: .nvmrc
+
+    - name: Enable Corepack
+      if: env.NODE_PACKAGE_MANAGER == 'pnpm'
+      shell: bash
+      run: corepack enable
 
     - name: Authenticate with Fontawesome NPM repository
       shell: bash
@@ -83,6 +93,7 @@ runs:
     # vulnerabilities are covered by the nightly scan, which actually gates;
     # npm's install-time audit output gates nothing.
     - name: Configure npm for CI
+      if: env.NODE_PACKAGE_MANAGER == 'npm'
       shell: bash
       run: |
         npm config set audit false
@@ -162,4 +173,4 @@ runs:
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: '**/node_modules'
-        key: ${{ runner.os }}-node-modules-${{ env.NPM_LOCK_HASH }}
+        key: ${{ runner.os }}-${{ env.NODE_PACKAGE_MANAGER }}-node-modules-${{ env.NODE_LOCK_HASH }}
