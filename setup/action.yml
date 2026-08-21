@@ -54,9 +54,12 @@ runs:
         if [ -f pnpm-lock.yaml ]; then
           echo "NODE_PACKAGE_MANAGER=pnpm" >> "$GITHUB_ENV"
           echo "NODE_LOCK_HASH=${{ hashFiles('pnpm-lock.yaml') }}" >> "$GITHUB_ENV"
+          echo "NODE_MODULES_CACHE_KEY=${{ runner.os }}-pnpm-node-modules-${{ hashFiles('pnpm-lock.yaml') }}" >> "$GITHUB_ENV"
         else
           echo "NODE_PACKAGE_MANAGER=npm" >> "$GITHUB_ENV"
           echo "NODE_LOCK_HASH=${{ hashFiles('**/package-lock.json') }}" >> "$GITHUB_ENV"
+          # Keep the pre-pnpm key shape so existing npm repo caches stay valid.
+          echo "NODE_MODULES_CACHE_KEY=${{ runner.os }}-node-modules-${{ hashFiles('**/package-lock.json') }}" >> "$GITHUB_ENV"
         fi
 
     - name: Setup Node
@@ -173,4 +176,4 @@ runs:
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: '**/node_modules'
-        key: ${{ runner.os }}-${{ env.NODE_PACKAGE_MANAGER }}-node-modules-${{ env.NODE_LOCK_HASH }}
+        key: ${{ env.NODE_MODULES_CACHE_KEY }}

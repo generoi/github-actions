@@ -20,26 +20,12 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Detect package manager
-        id: pm
-        shell: bash
-        run: |
-          if [ -f pnpm-lock.yaml ]; then
-            echo "manager=pnpm" >> "$GITHUB_OUTPUT"
-          else
-            echo "manager=npm" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Setup Node
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version-file: .nvmrc
-          cache: ${{ steps.pm.outputs.manager }}
-          cache-dependency-path: ${{ steps.pm.outputs.manager == 'pnpm' && 'pnpm-lock.yaml' || '**/package-lock.json' }}
-
-      - name: Enable Corepack
-        if: steps.pm.outputs.manager == 'pnpm'
-        run: corepack enable
+          cache: 'npm'
+          cache-dependency-path: '**/package-lock.json'
 
       # Deliberately no node_modules or ~/.cache/ms-playwright cache here. Both
       # were tried (#44) and measured slower: the four cache steps cost ~30-40s
@@ -65,24 +51,12 @@ jobs:
 
       - name: Install dependencies
         timeout-minutes: 5
-        shell: bash
-        run: |
-          if [ -f pnpm-lock.yaml ]; then
-            pnpm run e2e:install
-          else
-            npm run e2e:install
-          fi
+        run: npm run e2e:install
 
       - name: Run E2E tests
         env:
           URL: ${{ inputs.url }}
-        shell: bash
-        run: |
-          if [ -f pnpm-lock.yaml ]; then
-            pnpm run e2e:test
-          else
-            npm run e2e:test
-          fi
+        run: npm run e2e:test
 
       - name: Upload test results
         if: always()

@@ -13,7 +13,7 @@ This is a **private** repository. To allow other repos in the org to use these a
 
 | Action | Description |
 |--------|-------------|
-| `setup` | PHP + Node.js setup with caching, Fontawesome and Packagist auth (auto-detects pnpm vs npm from lockfile) |
+| `setup` | PHP + Node.js setup with caching, Fontawesome and Packagist auth |
 | `install-wordpress` | MySQL + WP dev server install (single or multisite) |
 | `setup-ddev` | DDEV setup (pinned SHA) |
 | `ssh-agent` | SSH agent wrapper (pinned SHA) |
