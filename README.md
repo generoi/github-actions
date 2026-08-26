@@ -61,9 +61,11 @@ source, and Dependabot only resolves git sources — then falls back to a metada
 lookup hardcoded to `repo.packagist.org`, where those packages do not exist. No
 `dependabot.yml` setting changes either half.
 
-`plugin-changelog.yml` fills the gap from `api.wordpress.org` instead. The caller
-owns the trigger and the token, because a reusable workflow can only narrow the
-caller's permissions, never widen them:
+`plugin-changelog.yml` fills the gap from `api.wordpress.org` instead. It runs
+only on Dependabot's PRs — a human opening a `composer update` PR picked the
+versions and already knows what moved. The caller owns the trigger and the
+token, because a reusable workflow can only narrow the caller's permissions,
+never widen them:
 
 ```yaml
 on:
