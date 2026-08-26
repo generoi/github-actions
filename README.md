@@ -21,15 +21,29 @@ This is a **private** repository. To allow other repos in the org to use these a
 ### Usage
 
 ```yaml
-- uses: generoi/github-actions/setup@v1
+- uses: generoi/github-actions/setup@v2
   with:
     npm_fontawesome_auth_token: ${{ secrets.NPM_FONTAWESOME_AUTH_TOKEN }}
-    packagist_github_token: ${{ secrets.PACKAGIST_GITHUB_TOKEN }}
+    composer_bot_private_key: ${{ secrets.COMPOSER_BOT_PRIVATE_KEY }}
 
 - uses: generoi/github-actions/install-wordpress@v1
   with:
     multisite: 'true'
 ```
+
+#### Composer credentials
+
+`setup` needs a credential that can read our private plugin repositories. Pass
+exactly one:
+
+- `composer_bot_private_key` — preferred. The private key for the
+  `genero-composer-bot` GitHub App; the action mints an installation token per
+  run, valid for an hour and revoked when the job ends.
+- `packagist_github_token` — the older path, a PAT on the `generoi-deploy`
+  machine user. Still accepted so repositories can migrate one at a time.
+
+Passing neither fails the run immediately rather than surfacing later as a 404
+on a private package.
 
 ## Reusable Workflows
 
