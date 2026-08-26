@@ -10,7 +10,11 @@ on:
       NPM_FONTAWESOME_AUTH_TOKEN:
         required: true
       PACKAGIST_GITHUB_TOKEN:
-        required: true
+        # Optional since COMPOSER_BOT_PRIVATE_KEY arrived. Pass one or the
+        # other; setup fails up front if a caller passes neither.
+        required: false
+      COMPOSER_BOT_PRIVATE_KEY:
+        required: false
       DB_ARTIFACT_KEY:
         required: true
       OPENAI_API_KEY:
@@ -24,10 +28,11 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup project
-        uses: generoi/github-actions/setup@v1
+        uses: generoi/github-actions/setup@v2
         with:
           npm_fontawesome_auth_token: ${{ secrets.NPM_FONTAWESOME_AUTH_TOKEN }}
           packagist_github_token: ${{ secrets.PACKAGIST_GITHUB_TOKEN }}
+          composer_bot_private_key: ${{ secrets.COMPOSER_BOT_PRIVATE_KEY }}
 
       - name: Install and build
         run: composer install:development
