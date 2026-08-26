@@ -1,0 +1,115 @@
+name: 'Composer GitHub auth'
+description: 'Give Composer read access to our private plugin repositories'
+
+# Must run AFTER a step that installs Composer — it writes through
+# `composer config`, so setup-php (or equivalent) has to have run first.
+#
+# This exists because the auth is not one line and the second line is not
+# obvious. It was duplicated in setup/action.yml and vulnerability-scan.yml for
+# exactly one commit before being pulled out here: this repository already has
+# ten downstream copies of a setup action that drifted apart, and the
+# x-access-token detail below is precisely the kind of hard-won thing that does
+# not survive being copied.
+
+inputs:
+  packagist_github_token:
+    description: >
+      A PAT on the generoi-deploy machine user. Superseded by
+      composer_bot_private_key and kept so repositories can migrate one at a
+      time; pass one or the other.
+    required: false
+    default: ''
+  composer_bot_private_key:
+    description: >
+      Private key for the genero-composer-bot GitHub App. Preferred: the token
+      is minted per run, expires in an hour, never needs rotating, and is scoped
+      by what the app is installed on.
+    required: false
+    default: ''
+  composer_bot_client_id:
+    description: >
+      genero-composer-bot's client id. Not a secret — GET /orgs/{org}/installations
+      returns it to any org member. Override only if the app is ever replaced.
+    required: false
+    default: 'Iv23liSq2pR9zC6lUtCH'
+
+outputs:
+  token:
+    description: 'The credential Composer was configured with, minted or PAT.'
+    value: ${{ steps.resolve.outputs.token }}
+
+runs:
+  using: 'composite'
+  steps:
+    # continue-on-error so a caller that has not been granted the key falls back
+    # to the PAT rather than failing. The resolve step below turns "no
+    # credential at all" into a named error.
+    - name: Mint a Composer token
+      if: inputs.composer_bot_private_key != ''
+      id: composer-bot
+      continue-on-error: true
+      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+      with:
+        client-id: ${{ inputs.composer_bot_client_id }}
+        private-key: ${{ inputs.composer_bot_private_key }}
+        owner: ${{ github.repository_owner }}
+
+    - name: Resolve the credential
+      id: resolve
+      shell: bash
+      env:
+        APP_TOKEN: ${{ steps.composer-bot.outputs.token }}
+        PAT: ${{ inputs.packagist_github_token }}
+        KEY: ${{ inputs.composer_bot_private_key }}
+      run: |
+        set -euo pipefail
+
+        if [ -n "$APP_TOKEN" ]; then
+          echo "kind=app" >> "$GITHUB_OUTPUT"
+          echo "token=$APP_TOKEN" >> "$GITHUB_OUTPUT"
+          echo "Using a genero-composer-bot installation token."
+          exit 0
+        fi
+
+        if [ -n "$KEY" ]; then
+          echo "::warning title=App token mint failed::composer_bot_private_key was supplied but no token came back, so this run falls back to the PAT. Check that genero-composer-bot is still installed and the key is current."
+        fi
+
+        if [ -z "$PAT" ]; then
+          echo "::error title=No Composer credential::Pass composer_bot_private_key (preferred) or packagist_github_token. Without one, private generoi/* packages resolve as 404s, which reads like a missing package rather than a missing credential."
+          exit 1
+        fi
+
+        echo "kind=pat" >> "$GITHUB_OUTPUT"
+        echo "token=$PAT" >> "$GITHUB_OUTPUT"
+        echo "Using PACKAGIST_GITHUB_TOKEN."
+
+    # Two entries, because Composer reaches GitHub two ways and an installation
+    # token is accepted on only one of them out of the box.
+    #
+    #   github-oauth  — the GitHub API. Covers every package resolved through
+    #                   the satis index, whose dist URLs are api.github.com
+    #                   zipballs. Works with either credential as-is.
+    #   http-basic    — the git-over-HTTPS path, used for anything pulled
+    #                   straight from a git repository. Composer sends a
+    #                   github-oauth token with the username `x-oauth-basic`;
+    #                   installation tokens require `x-access-token`, so without
+    #                   this an app token fails there with the thoroughly
+    #                   misleading "Support for password authentication was
+    #                   removed".
+    #
+    # Measured in generoi/packagist#16 rather than taken from the issue thread:
+    #   x-access-token: exit 0
+    #   x-oauth-basic:  exit 128
+    # See composer/composer#11064.
+    - name: Configure Composer
+      shell: bash
+      env:
+        TOKEN: ${{ steps.resolve.outputs.token }}
+        KIND: ${{ steps.resolve.outputs.kind }}
+      run: |
+        set -euo pipefail
+        composer config -g github-oauth.github.com "$TOKEN"
+        if [ "$KIND" = "app" ]; then
+          composer config -g -a http-basic.github.com x-access-token "$TOKEN"
+        fi
