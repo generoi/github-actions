@@ -33,9 +33,12 @@ on:
 jobs:
   changelog:
     name: Comment plugin changelogs
-    # Guarded here rather than in each caller so the rule stays uniform across
-    # every consuming repo. `github.event` inside a called workflow is the
-    # caller's triggering event, so this reads the real PR author.
+    # Backstop. Callers repeat this as a job-level `if` on their `uses:` job,
+    # which is what actually skips the work — this guard runs only once the
+    # reusable workflow has already been called. Kept here so a caller that
+    # forgets it still posts nothing rather than commenting on human PRs.
+    # `github.event` inside a called workflow is the caller's triggering event,
+    # so this reads the real PR author.
     if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     # Declared here *and* in the caller. A reusable workflow can only narrow the

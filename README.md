@@ -79,8 +79,13 @@ permissions:
 
 jobs:
   changelog:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     uses: generoi/github-actions/.github/workflows/plugin-changelog.yml@v2
 ```
+
+Keep that `if` even though the shared workflow guards on the author too: the
+job-level one skips the reusable-workflow call outright, while the shared one
+only runs after the call has been made.
 
 Dependabot's `pull_request` events get a read-only token *by default*, but an
 explicit `permissions:` block still elevates it — so this needs no
