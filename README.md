@@ -39,6 +39,7 @@ This is a **private** repository. To allow other repos in the org to use these a
 | `deploy.yml` | SSH + build + test + deployer |
 | `e2e.yml` | Playwright E2E tests against a URL |
 | `vulnerability-scan.yml` | WP vuln scan + Google Chat notification |
+| `plugin-changelog.yml` | Comment wp.org changelogs for changed `wp-plugin/*` |
 
 ### Usage
 
@@ -51,6 +52,38 @@ jobs:
       multisite: true
       smoke_grep: 'app/themes/gds/public/scripts/app.js'
 ```
+
+### Changelogs for `wp-plugin/*`
+
+Dependabot renders release notes for every github-sourced package and nothing at
+all for `wp-plugin/*`: WP Packages publishes the wp.org SVN tag as the package
+source, and Dependabot only resolves git sources — then falls back to a metadata
+lookup hardcoded to `repo.packagist.org`, where those packages do not exist. No
+`dependabot.yml` setting changes either half.
+
+`plugin-changelog.yml` fills the gap from `api.wordpress.org` instead. The caller
+owns the trigger and the token, because a reusable workflow can only narrow the
+caller's permissions, never widen them:
+
+```yaml
+on:
+  pull_request:
+    paths:
+      - composer.lock
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  changelog:
+    uses: generoi/github-actions/.github/workflows/plugin-changelog.yml@v2
+```
+
+Dependabot's `pull_request` events get a read-only token *by default*, but an
+explicit `permissions:` block still elevates it — so this needs no
+`pull_request_target`, and should not use one. Drop `contents: read` and the
+comment still posts, from a diff-hunk fallback that quietly misses plugins.
 
 ### Scheduling the nightly scan
 
