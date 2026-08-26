@@ -1,0 +1,60 @@
+name: "CI: Plugin Changelogs"
+
+# Dependabot cannot produce release notes for `wp-plugin/*`, so the monthly
+# composer PR lists those rows bare — no link, no changelog — while every
+# github-sourced package around them gets a full release-notes block. Two dead
+# ends upstream, neither of them configurable from dependabot.yml:
+#
+#   1. Composer::FileParser only emits a dependency source when composer.lock
+#      has `source.type == "git"`. WP Packages publishes the authoritative
+#      wp.org SVN tag (`plugins.svn.wordpress.org/<slug>/`), so this returns
+#      nil before Source.from_url (github/gitlab/bitbucket/azure only) is ever
+#      reached.
+#   2. Composer::MetadataFinder#packagist_listing hardcodes
+#      repo.packagist.org/p2/<name>.json and ignores the project's
+#      `repositories` block entirely — `wp-plugin/*` is a 404 there and always
+#      will be, whatever WP Packages publishes.
+#
+# So the changelog has to come from api.wordpress.org instead. Roots — who also
+# run WP Packages — ship an action that does exactly that: it diffs composer.lock
+# across the PR, filters `wp-plugin/*`, and upserts a single comment holding each
+# changed plugin's wp.org changelog. It also flags an installed version that is
+# ahead of the plugin's current stable tag, which is the withdrawn-release case
+# in roots/wp-packages#78.
+#
+# Restricted to Dependabot, which is where the gap actually is: a human opening
+# a `composer update` PR chose the versions and already knows what moved, and
+# the wp.org lookups are a few seconds of runner time per changed plugin on
+# every push to any PR that happens to touch composer.lock.
+
+on:
+  workflow_call:
+
+jobs:
+  changelog:
+    name: Comment plugin changelogs
+    # Backstop. Callers repeat this as a job-level `if` on their `uses:` job,
+    # which is what actually skips the work — this guard runs only once the
+    # reusable workflow has already been called. Kept here so a caller that
+    # forgets it still posts nothing rather than commenting on human PRs.
+    # `github.event` inside a called workflow is the caller's triggering event,
+    # so this reads the real PR author.
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    # Declared here *and* in the caller. A reusable workflow can only narrow the
+    # caller's token, never widen it, so the callee alone cannot grant this —
+    # the effective permission is the intersection of the two. Keeping it in
+    # both places means the shared file states what it needs, and a caller that
+    # forgets the block fails on a 403 rather than silently posting nothing.
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      # No actions/checkout on purpose (the marketplace snippet has one): the
+      # action reads both composer.lock revisions through the contents API, so a
+      # checkout is pure runner time. That `contents: read` is load-bearing
+      # though — without it the action silently degrades to parsing the diff
+      # hunk, which misses any plugin whose `"name":` line stayed unchanged
+      # context and only says so in a warning inside the comment.
+      - name: Comment changelogs on PR
+        uses: roots/wp-packages-changelog-action@93e74ae4e90229d949c89c7380b1b7271ec7f4d0 # v3.1.0
