@@ -45,6 +45,18 @@ exactly one:
 Passing neither fails the run immediately rather than surfacing later as a 404
 on a private package.
 
+Both are handled by [`composer-auth`](./composer-auth), which `setup` calls after
+installing PHP. Use it directly only if you drive `setup-php` yourself and so
+cannot go through `setup` — `vulnerability-scan.yml` is the one case in this
+repo. It must run *after* Composer exists, since it configures through
+`composer config`.
+
+```yaml
+- uses: generoi/github-actions/composer-auth@v2
+  with:
+    composer_bot_private_key: ${{ secrets.COMPOSER_BOT_PRIVATE_KEY }}
+```
+
 ## Reusable Workflows
 
 | Workflow | Description |

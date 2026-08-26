@@ -55,29 +55,6 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    # packagist_github_token stopped being `required: true` when the app token
-    # arrived, so a caller that passes neither would otherwise sail through here
-    # and fail much later, deep in composer, as a 404 on a private package —
-    # which reads like a missing package rather than a missing credential.
-    - name: Check a Composer credential was supplied
-      if: inputs.packagist_github_token == '' && inputs.composer_bot_private_key == ''
-      shell: bash
-      run: |
-        echo "::error title=No Composer credential::Pass composer_bot_private_key (preferred) or packagist_github_token to this action. Without one, private generoi/* packages cannot be resolved."
-        exit 1
-
-    # Minted per run, valid for an hour, revoked in this action's post step.
-    # Skipped entirely when the caller is still on the PAT, so moving the v2 tag
-    # changes nothing for a repository that has not opted in yet.
-    - name: Mint a Composer token
-      if: inputs.composer_bot_private_key != ''
-      id: composer-bot
-      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-      with:
-        client-id: ${{ inputs.composer_bot_client_id }}
-        private-key: ${{ inputs.composer_bot_private_key }}
-        owner: ${{ github.repository_owner }}
-
     # Hash the lock files ONCE, before any cache is restored.
     #
     # These keys used to embed hashFiles() directly, and that glob walks whatever
@@ -161,27 +138,16 @@ runs:
         # No coverage driver: nothing here measures coverage, and an active
         # xdebug slows every PHP process it loads into, composer included.
         coverage: none
-      env:
-        # setup-php turns this into Composer's github-oauth entry.
-        COMPOSER_TOKEN: ${{ steps.composer-bot.outputs.token || inputs.packagist_github_token }}
 
-    # github-oauth alone is enough for a PAT, and enough for an app token on the
-    # GitHub API — which covers everything resolved through the satis index,
-    # whose dist URLs are api.github.com zipballs. It is NOT enough for the
-    # packages a project pulls straight from a git repository: there Composer
-    # sends the token with the username `x-oauth-basic`, which GitHub rejects
-    # for installation tokens. They require `x-access-token`.
-    #
-    # Measured rather than assumed, in generoi/packagist#16:
-    #   x-access-token: exit 0
-    #   x-oauth-basic:  exit 128 — "Password authentication is not supported"
-    # See composer/composer#11064.
-    - name: Authenticate git-over-HTTPS with the app token
-      if: steps.composer-bot.outputs.token != ''
-      shell: bash
-      env:
-        COMPOSER_TOKEN: ${{ steps.composer-bot.outputs.token }}
-      run: composer config -g -a http-basic.github.com x-access-token "$COMPOSER_TOKEN"
+    # All Composer GitHub auth lives in composer-auth, including the reason it
+    # takes two entries rather than one. Must come after setup-php: it writes
+    # through `composer config`.
+    - name: Authenticate Composer with GitHub
+      uses: generoi/github-actions/composer-auth@v2
+      with:
+        packagist_github_token: ${{ inputs.packagist_github_token }}
+        composer_bot_private_key: ${{ inputs.composer_bot_private_key }}
+        composer_bot_client_id: ${{ inputs.composer_bot_client_id }}
 
     - name: Authenticate with Yoast Premium Composer repository
       if: inputs.yoast_license_token != ''
