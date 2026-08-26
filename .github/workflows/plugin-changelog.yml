@@ -22,8 +22,10 @@ name: "CI: Plugin Changelogs"
 # ahead of the plugin's current stable tag, which is the withdrawn-release case
 # in roots/wp-packages#78.
 #
-# Deliberately not restricted to Dependabot: a hand-run `composer update` PR
-# wants the same comment, and the action no-ops when no `wp-plugin/*` moved.
+# Restricted to Dependabot, which is where the gap actually is: a human opening
+# a `composer update` PR chose the versions and already knows what moved, and
+# the wp.org lookups are a few seconds of runner time per changed plugin on
+# every push to any PR that happens to touch composer.lock.
 
 on:
   workflow_call:
@@ -31,6 +33,10 @@ on:
 jobs:
   changelog:
     name: Comment plugin changelogs
+    # Guarded here rather than in each caller so the rule stays uniform across
+    # every consuming repo. `github.event` inside a called workflow is the
+    # caller's triggering event, so this reads the real PR author.
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     # Declared here *and* in the caller. A reusable workflow can only narrow the
     # caller's token, never widen it, so the callee alone cannot grant this —
