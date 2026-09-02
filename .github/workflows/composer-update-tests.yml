@@ -18,6 +18,9 @@ jobs:
   test:
     name: Run composer-update tests
     runs-on: ubuntu-latest
+    # See the note in generoi/github-actions test.yml. These exercise a real
+    # `composer update`, so give them room, but not the 360-minute default.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
