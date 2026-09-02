@@ -45,6 +45,16 @@ jobs:
   test:
     name: Run tests
     runs-on: ubuntu-latest
+    # Without this the job inherits GitHub's 360-minute ceiling, and a `wp-env`
+    # or Playwright step that hangs rather than fails bills six hours of runner
+    # time before a human notices.
+    #
+    # Sized at roughly 3x the slowest healthy run, which is the rule the other
+    # jobs here follow too. Measure against job execution time, not the run's
+    # wall clock — a run can sit queued for hours without burning a minute, so
+    # sizing off wall clock produces a limit far looser than it looks. A job
+    # that reaches this is wedged, not slow.
+    timeout-minutes: 15
     steps:
       - name: Checkout Repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

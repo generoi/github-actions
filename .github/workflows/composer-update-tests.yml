@@ -18,6 +18,8 @@ jobs:
   test:
     name: Run composer-update tests
     runs-on: ubuntu-latest
+    # See the note in test.yml for the sizing rule.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
