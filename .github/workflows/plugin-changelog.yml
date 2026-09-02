@@ -41,8 +41,9 @@ jobs:
     # so this reads the real PR author.
     if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
-    # See the note in test.yml. This only reads changelogs and posts a comment.
-    timeout-minutes: 15
+    # See the note in test.yml for the sizing rule. This only reads changelogs
+    # and posts a comment.
+    timeout-minutes: 5
     # Declared here *and* in the caller. A reusable workflow can only narrow the
     # caller's token, never widen it, so the callee alone cannot grant this —
     # the effective permission is the intersection of the two. Keeping it in

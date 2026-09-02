@@ -41,10 +41,10 @@ jobs:
     name: Build and deploy
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
-    # See the note in test.yml. Deploys are the longest job we run, and the
-    # failure mode this bounds is a wedged SSH session or a stalled rsync,
-    # which hang rather than exit.
-    timeout-minutes: 45
+    # See the note in test.yml for the sizing rule. Deploys are the longest job
+    # we run, and the failure mode this bounds is a wedged SSH session or a
+    # stalled rsync — both hang rather than exit.
+    timeout-minutes: 20
     steps:
       - name: Checkout Repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
