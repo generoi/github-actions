@@ -81,22 +81,30 @@ jobs:
       # private registry this job holds no token for, and 401'd before the
       # script ran at all. The job manages its own install; the pre-run check is
       # redundant here and was the thing failing.
-      # Branching rather than an env var: pnpm honours this only as a CLI flag.
-      # npm_config_verify_deps_before_run and npm_config_verifyDepsBeforeRun
-      # were both measured and neither disables the check.
-      - name: Install dependencies
-        timeout-minutes: 5
+      # RUN is every `<manager> run` in this job. pnpm checks node_modules
+      # against the lockfile before running *any* script, and that check
+      # resolves the whole workspace — reaching a private registry this job
+      # holds no token for. It has to be off for both steps below, not just the
+      # install: fixing only the install moved the same 401 to `e2e:test`.
+      #
+      # A CLI flag rather than an env var: npm_config_verify_deps_before_run and
+      # npm_config_verifyDepsBeforeRun were both measured and neither works.
+      - name: Resolve the run command
         run: |
           if [ "$NODE_PACKAGE_MANAGER" = "pnpm" ]; then
-            pnpm --config.verifyDepsBeforeRun=false run e2e:install
+            echo "RUN=pnpm --config.verifyDepsBeforeRun=false run" >> "$GITHUB_ENV"
           else
-            npm run e2e:install
+            echo "RUN=npm run" >> "$GITHUB_ENV"
           fi
+
+      - name: Install dependencies
+        timeout-minutes: 5
+        run: $RUN e2e:install
 
       - name: Run E2E tests
         env:
           URL: ${{ inputs.url }}
-        run: $NODE_PACKAGE_MANAGER run e2e:test
+        run: $RUN e2e:test
 
       - name: Upload test results
         if: always()
