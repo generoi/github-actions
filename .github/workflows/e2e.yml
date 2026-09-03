@@ -35,13 +35,15 @@ jobs:
         with:
           node-version-file: .nvmrc
 
-      # setup-node's own `cache:` is not used: it takes one package manager as a
-      # literal, and this workflow serves both. The download cache below is
-      # keyed off whichever lockfile is present.
       - name: Enable Corepack
         if: env.NODE_PACKAGE_MANAGER == 'pnpm'
         run: corepack enable
 
+      # setup-node's own `cache:` is not used: it takes one package manager as a
+      # literal, and this workflow serves both. This is the same ~/.npm it would
+      # have cached for npm, plus pnpm's content-addressable store, keyed off
+      # whichever lockfile is present — a swap, not an addition to what #44
+      # measured.
       - name: Cache the package manager's store
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
         with:
@@ -52,10 +54,12 @@ jobs:
       # were tried (#44) and measured slower: the four cache steps cost ~30-40s
       # of restore/save to move ~130 MB, while the Chromium download they replace
       # takes ~5s from Playwright's CDN. The node_modules cache made it worse
-      # still — the key is seeded by setup's full-workspace install, but this job
-      # runs `npm install --workspaces=false`, so npm prunes a tree it doesn't
-      # want. tammet's e2e job: 44-56s before, 95-98s after.
-      # `e2e:install` runs `npm install --workspaces=false`, which normally skips
+      # still — the key is seeded by setup's full-workspace install, while this
+      # job installs the root only, so the restored tree gets pruned. tammet's
+      # e2e job: 44-56s before, 95-98s after.
+      #
+      # `e2e:install` installs the root package only — `--workspaces=false` under
+      # npm, `--ignore-workspace --no-lockfile` under pnpm — which normally skips
       # the theme where @fortawesome lives. Some repos (kokkikartano.fi, mutti)
       # have those packages in the ROOT tree instead, so the install reaches
       # npm.fontawesome.com and 401s without a token.
@@ -73,14 +77,6 @@ jobs:
           # installing here.
           printf '//npm.fontawesome.com/:_authToken=%s\n' "$FONTAWESOME_TOKEN" >> ~/.npmrc
 
-      # npm_config_verify_deps_before_run is read by pnpm and ignored by npm.
-      #
-      # `pnpm run` checks node_modules against the lockfile before it runs the
-      # script, and that check resolves the whole workspace — so a repo whose
-      # e2e:install deliberately installs the root only still reached the
-      # private registry this job holds no token for, and 401'd before the
-      # script ran at all. The job manages its own install; the pre-run check is
-      # redundant here and was the thing failing.
       # RUN is every `<manager> run` in this job. pnpm checks node_modules
       # against the lockfile before running *any* script, and that check
       # resolves the whole workspace — reaching a private registry this job
