@@ -73,8 +73,18 @@ jobs:
           # installing here.
           printf '//npm.fontawesome.com/:_authToken=%s\n' "$FONTAWESOME_TOKEN" >> ~/.npmrc
 
+      # npm_config_verify_deps_before_run is read by pnpm and ignored by npm.
+      #
+      # `pnpm run` checks node_modules against the lockfile before it runs the
+      # script, and that check resolves the whole workspace — so a repo whose
+      # e2e:install deliberately installs the root only still reached the
+      # private registry this job holds no token for, and 401'd before the
+      # script ran at all. The job manages its own install; the pre-run check is
+      # redundant here and was the thing failing.
       - name: Install dependencies
         timeout-minutes: 5
+        env:
+          npm_config_verify_deps_before_run: false
         run: $NODE_PACKAGE_MANAGER run e2e:install
 
       - name: Run E2E tests
