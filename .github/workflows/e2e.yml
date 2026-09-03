@@ -20,12 +20,33 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      # This job does not use the setup action, so it detects the package
+      # manager itself — the same rule, from the lockfile on disk.
+      - name: Detect the package manager
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            echo "NODE_PACKAGE_MANAGER=pnpm" >> "$GITHUB_ENV"
+          else
+            echo "NODE_PACKAGE_MANAGER=npm" >> "$GITHUB_ENV"
+          fi
+
       - name: Setup Node
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version-file: .nvmrc
-          cache: 'npm'
-          cache-dependency-path: '**/package-lock.json'
+
+      # setup-node's own `cache:` is not used: it takes one package manager as a
+      # literal, and this workflow serves both. The download cache below is
+      # keyed off whichever lockfile is present.
+      - name: Enable Corepack
+        if: env.NODE_PACKAGE_MANAGER == 'pnpm'
+        run: corepack enable
+
+      - name: Cache the package manager's store
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        with:
+          path: ${{ env.NODE_PACKAGE_MANAGER == 'pnpm' && '~/.local/share/pnpm/store' || '~/.npm' }}
+          key: ${{ runner.os }}-${{ env.NODE_PACKAGE_MANAGER }}-store-${{ hashFiles('pnpm-lock.yaml', '**/package-lock.json') }}
 
       # Deliberately no node_modules or ~/.cache/ms-playwright cache here. Both
       # were tried (#44) and measured slower: the four cache steps cost ~30-40s
@@ -47,16 +68,19 @@ jobs:
           FONTAWESOME_TOKEN: ${{ secrets.NPM_FONTAWESOME_AUTH_TOKEN }}
         run: |
           [ -n "$FONTAWESOME_TOKEN" ] || exit 0
-          npm config set "//npm.fontawesome.com/:_authToken" "$FONTAWESOME_TOKEN"
+          # Written to ~/.npmrc directly rather than through `npm config set`:
+          # both managers read that file, and npm is not necessarily the one
+          # installing here.
+          printf '//npm.fontawesome.com/:_authToken=%s\n' "$FONTAWESOME_TOKEN" >> ~/.npmrc
 
       - name: Install dependencies
         timeout-minutes: 5
-        run: npm run e2e:install
+        run: $NODE_PACKAGE_MANAGER run e2e:install
 
       - name: Run E2E tests
         env:
           URL: ${{ inputs.url }}
-        run: npm run e2e:test
+        run: $NODE_PACKAGE_MANAGER run e2e:test
 
       - name: Upload test results
         if: always()
