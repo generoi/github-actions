@@ -71,9 +71,14 @@ jobs:
       - name: Install Composer dependencies
         run: composer install --no-interaction
 
-      - name: Install npm dependencies
+      # $NODE_PACKAGE_MANAGER is set by the setup action from the lockfile on
+      # disk, so a repo that has switched to pnpm gets pnpm here without saying
+      # so twice. `pnpm install` with a committed lockfile is already
+      # frozen-lockfile in CI, so no flag is needed to match `npm install`'s
+      # behaviour here.
+      - name: Install Node dependencies
         if: inputs.run_tests
-        run: npm install
+        run: $NODE_PACKAGE_MANAGER install
 
       - name: Configure SSH
         if: inputs.ssh_config != ''
