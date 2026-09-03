@@ -61,6 +61,10 @@ jobs:
           packagist_github_token: ${{ secrets.PACKAGIST_GITHUB_TOKEN }}
           composer_bot_private_key: ${{ secrets.COMPOSER_BOT_PRIVATE_KEY }}
           yoast_license_token: ${{ secrets.YOAST_LICENSE_TOKEN }}
+          # With run_tests: false nothing in this job touches the workspace's
+          # node_modules — deployer installs in its own build_path — so the
+          # ~255 MB restore is dead weight.
+          node_modules_cache: ${{ inputs.run_tests && 'always' || 'skip' }}
 
       # Composer is always needed — dep and robo live in vendor/bin. npm is only
       # needed because composer test lints the front end, so it follows run_tests.
