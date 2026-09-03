@@ -51,6 +51,14 @@ inputs:
       needs the package zips even when the workspace vendor cache hit.
     required: false
     default: 'always'
+  node_modules_cache:
+    description: >
+      'always' (default) restores **/node_modules. 'skip' omits it, for jobs
+      that never touch the workspace's node_modules — a deploy with
+      run_tests: false is the case, since deployer installs in its own
+      build_path. The restore is ~255 MB and ~23s.
+    required: false
+    default: 'always'
 
 runs:
   using: 'composite'
@@ -202,6 +210,7 @@ runs:
           ${{ runner.os }}-composer-php${{ env.PHP_VERSION }}-
 
     - name: Node modules cache
+      if: inputs.node_modules_cache != 'skip'
       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
       with:
         path: '**/node_modules'
