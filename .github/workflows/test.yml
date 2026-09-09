@@ -91,11 +91,24 @@ jobs:
       - name: Load frontpage
         run: |
           # install-wordpress already waited for the server to accept connections,
-          # so reaching this step with nothing listening means it came up and then
-          # DIED — a different failure, and one the old retry loop reported as a
-          # bare curl exit 7 with no explanation. Say so, and show its output.
-          if ! curl -s -o /dev/null http://localhost:8080/ 2>/dev/null; then
-            echo "::error::Web server was up during install but is no longer listening"
+          # so reaching this step with a failing probe means it came up and then
+          # broke. There are two ways that happens and they point at completely
+          # different causes, so name which one it was:
+          #   7  — nothing listening any more, the server process died.
+          #   28 — still listening, but the front page wedged (a request that
+          #        blocks, e.g. an outbound call with no timeout of its own).
+          # --max-time 30 is what separates them. PHP kills a wedged request at
+          # max_execution_time 30+2s anyway, so this can only fail a request that
+          # was already doomed — but it fails it as a legible timeout instead of
+          # the empty reply PHP's fatal leaves behind, which read as a dead server.
+          probe=0
+          curl -s -o /dev/null --max-time 30 http://localhost:8080/ 2>/dev/null || probe=$?
+          if [ "$probe" -ne 0 ]; then
+            case "$probe" in
+              7)  echo "::error::Web server was up during install but is no longer listening" ;;
+              28) echo "::error::Web server is listening but the front page did not respond within 30s" ;;
+              *)  echo "::error::Front page probe failed (curl exit $probe)" ;;
+            esac
             if [ -f /tmp/wp-server.pid ] && ! kill -0 "$(cat /tmp/wp-server.pid)" 2>/dev/null; then
               echo "wp server process $(cat /tmp/wp-server.pid) is gone"
             fi
@@ -104,7 +117,7 @@ jobs:
             exit 1
           fi
 
-          RESPONSE=$(curl -sSLf http://localhost:8080/)
+          RESPONSE=$(curl -sSLf --max-time 30 http://localhost:8080/)
           echo "$RESPONSE" > /tmp/frontpage.html
 
       - name: Verify frontpage content
