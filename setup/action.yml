@@ -146,6 +146,12 @@ runs:
         # No coverage driver: nothing here measures coverage, and an active
         # xdebug slows every PHP process it loads into, composer included.
         coverage: none
+        # setup-php turns on the tracing JIT (opcache.jit=1235) for PHP 8.x. In
+        # the test job's `wp server` it intermittently spins forever inside
+        # opcache while autoloading a class during plugin boot, and the front
+        # page times out at 30s. Nothing here benefits from the JIT. ini-values
+        # land in the same file after setup-php's own JIT lines, so this wins.
+        ini-values: opcache.jit=disable
 
     # All Composer GitHub auth lives in composer-auth, including the reason it
     # takes two entries rather than one. Must come after setup-php: it writes
