@@ -21,7 +21,7 @@ jobs:
     # See the note in test.yml for the sizing rule.
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The PHP helper tests run the real helpers and bootstrap composer/semver
       # into a temp vendor dir. jq, git and bash are preinstalled on the runner.
