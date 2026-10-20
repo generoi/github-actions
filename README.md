@@ -26,7 +26,7 @@ This is a **private** repository. To allow other repos in the org to use these a
     npm_fontawesome_auth_token: ${{ secrets.NPM_FONTAWESOME_AUTH_TOKEN }}
     composer_bot_private_key: ${{ secrets.COMPOSER_BOT_PRIVATE_KEY }}
 
-- uses: generoi/github-actions/install-wordpress@v1
+- uses: generoi/github-actions/install-wordpress@v2
   with:
     multisite: 'true'
 ```
