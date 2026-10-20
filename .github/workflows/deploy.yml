@@ -46,6 +46,20 @@ jobs:
     # stalled rsync — both hang rather than exit.
     timeout-minutes: 20
     steps:
+      # ubuntu-26.04 mounts /tmp as a RAM-backed tmpfs with a ~6 GB per-user
+      # quota, and deployer builds the whole release in /tmp/dep-<project>, so
+      # deploys die with "Disk quota exceeded". Put /tmp back on the root disk,
+      # as on 24.04. A no-op once the image does this itself.
+      # https://github.com/actions/runner-images/issues/14777
+      - name: Keep /tmp on the root disk
+        run: |
+          if findmnt -n -t tmpfs /tmp > /dev/null; then
+            sudo systemctl mask tmp.mount
+            sudo umount -l /tmp
+            sudo chmod 1777 /tmp
+          fi
+          df -h /tmp
+
       - name: Checkout Repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
