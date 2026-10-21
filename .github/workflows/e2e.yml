@@ -14,7 +14,12 @@ on:
 jobs:
   e2e:
     name: Run E2E tests
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: that is now ubuntu-26.04, and Playwright only supports
+    # it from 1.61. Sites resolve Playwright from their own package-lock.json and
+    # many still lock older releases (holmasto and herrfors lock 1.59.1), so on
+    # 26.04 `playwright install` fails with "Playwright does not support chromium
+    # on ubuntu26.04-x64". Go back to ubuntu-latest once sites lock >= 1.61.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Checkout Repository
