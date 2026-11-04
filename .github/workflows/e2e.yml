@@ -53,7 +53,7 @@ jobs:
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
         with:
           path: ${{ env.NODE_PACKAGE_MANAGER == 'pnpm' && '~/.local/share/pnpm/store' || '~/.npm' }}
-          key: ${{ runner.os }}-${{ env.NODE_PACKAGE_MANAGER }}-store-${{ hashFiles('pnpm-lock.yaml', '**/package-lock.json') }}
+          key: ${{ runner.os }}-${{ env.NODE_PACKAGE_MANAGER }}-store-${{ hashFiles('**/pnpm-lock.yaml', '**/package-lock.json') }}
 
       # Deliberately no node_modules or ~/.cache/ms-playwright cache here. Both
       # were tried (#44) and measured slower: the four cache steps cost ~30-40s

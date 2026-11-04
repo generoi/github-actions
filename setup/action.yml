@@ -82,8 +82,8 @@ runs:
         echo "COMPOSER_LOCK_HASH=${{ hashFiles('**/composer.lock') }}" >> "$GITHUB_ENV"
         if [ -f pnpm-lock.yaml ]; then
           echo "NODE_PACKAGE_MANAGER=pnpm" >> "$GITHUB_ENV"
-          echo "NODE_LOCK_HASH=${{ hashFiles('pnpm-lock.yaml') }}" >> "$GITHUB_ENV"
-          echo "NODE_MODULES_CACHE_KEY=${{ runner.os }}-pnpm-node-modules-${{ hashFiles('pnpm-lock.yaml') }}" >> "$GITHUB_ENV"
+          echo "NODE_LOCK_HASH=${{ hashFiles('**/pnpm-lock.yaml') }}" >> "$GITHUB_ENV"
+          echo "NODE_MODULES_CACHE_KEY=${{ runner.os }}-pnpm-node-modules-${{ hashFiles('**/pnpm-lock.yaml') }}" >> "$GITHUB_ENV"
         else
           echo "NODE_PACKAGE_MANAGER=npm" >> "$GITHUB_ENV"
           echo "NODE_LOCK_HASH=${{ hashFiles('**/package-lock.json') }}" >> "$GITHUB_ENV"
