@@ -10,6 +10,9 @@ on:
       NPM_FONTAWESOME_AUTH_TOKEN:
         required: false
         description: 'Fontawesome Pro npm token. Only needed when the ROOT install pulls @fortawesome packages; most repos keep them in a theme workspace, which `--workspaces=false` skips.'
+      RATE_LIMIT_BYPASS_TOKEN:
+        required: false
+        description: "gds-rate-limiter's bypass_token. The suite sends it as the `rate_limit_bypass` cookie, so the limiter doesn't 429 a runner making more uncached requests a minute than one IP may."
 
 jobs:
   e2e:
@@ -105,6 +108,9 @@ jobs:
       - name: Run E2E tests
         env:
           URL: ${{ inputs.url }}
+          # Read by the site's Playwright setup; empty when the caller passes no
+          # secret, and then the suite sends no cookie.
+          RATE_LIMIT_BYPASS_TOKEN: ${{ secrets.RATE_LIMIT_BYPASS_TOKEN }}
         run: $RUN e2e:test
 
       - name: Upload test results
