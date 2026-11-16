@@ -22,6 +22,13 @@ on:
           Re-run composer test before deploying. Defaults to true; set false in
           repos where the ref being deployed has already passed CI: Test, to skip
           the test run and the npm install that only exists to feed it.
+      purge:
+        type: string
+        default: ''
+        description: >
+          How the deploy purges the page caches: auto, none, soft or hard (see
+          deployer-genero's purge.php). Empty, or `default`, keeps the mode the
+          repo's deploy.php sets.
     secrets:
       DEPLOY_SSH_PRIVATE_KEY:
         required: true
@@ -124,4 +131,10 @@ jobs:
         env:
           DEPLOY_ENV: ${{ inputs.environment }}
           LOG_LEVEL: ${{ inputs.log_level }}
-        run: ./vendor/bin/dep deploy "$DEPLOY_ENV" "$LOG_LEVEL"
+          PURGE: ${{ inputs.purge }}
+        run: |
+          if [ -n "$PURGE" ] && [ "$PURGE" != default ]; then
+            ./vendor/bin/dep deploy "$DEPLOY_ENV" "$LOG_LEVEL" -o "purge=$PURGE"
+          else
+            ./vendor/bin/dep deploy "$DEPLOY_ENV" "$LOG_LEVEL"
+          fi
