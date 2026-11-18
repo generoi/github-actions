@@ -92,7 +92,7 @@ runs:
         fi
 
     - name: Setup Node
-      uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       # No `cache:` on purpose: the "Node modules cache" step below caches
       # **/node_modules directly, and when that hits, install is a no-op.
       with:
@@ -137,7 +137,7 @@ runs:
         echo "PHP_VERSION=$(cat ./composer.json | jq -r '.config.platform.php')" >> "$GITHUB_ENV"
 
     - name: Setup PHP
-      uses: shivammathur/setup-php@accd6127cb78bee3e8082180cb391013d204ef9f # v2.37.0
+      uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2.40.0
       with:
         php-version: ${{ env.PHP_VERSION }}
         # Pin Composer to a release that includes the fix for GHSA-f9f8-rm49-7jv2
@@ -192,7 +192,7 @@ runs:
     # one hits — see composer_download_cache.
     - name: Composer vendor cache
       id: vendor-cache
-      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: vendor
         key: ${{ runner.os }}-vendor-php${{ env.PHP_VERSION }}-${{ inputs.composer_dev == 'false' && 'nodev' || 'dev' }}-${{ env.COMPOSER_LOCK_HASH }}
@@ -208,7 +208,7 @@ runs:
     # its save, which is correct: nothing was downloaded.
     - name: Composer download cache
       if: inputs.composer_download_cache == 'always' || steps.vendor-cache.outputs.cache-hit != 'true'
-      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.composer-cache.outputs.dir }}
         key: ${{ runner.os }}-composer-php${{ env.PHP_VERSION }}-${{ env.COMPOSER_LOCK_HASH }}
@@ -217,7 +217,7 @@ runs:
 
     - name: Node modules cache
       if: inputs.node_modules_cache != 'skip'
-      uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: '**/node_modules'
         key: ${{ env.NODE_MODULES_CACHE_KEY }}
