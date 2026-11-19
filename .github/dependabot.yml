@@ -1,7 +1,14 @@
 version: 2
 updates:
   - package-ecosystem: "github-actions"
-    directory: "/"
+    # The composite actions' own `uses:` lines are not under "/".
+    directories:
+      - "/"
+      - "/composer-auth"
+      - "/install-wordpress"
+      - "/setup"
+      - "/setup-ddev"
+      - "/ssh-agent"
     schedule:
       interval: "weekly"
     groups:
