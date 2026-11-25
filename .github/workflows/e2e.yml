@@ -58,13 +58,13 @@ jobs:
           path: ${{ env.NODE_PACKAGE_MANAGER == 'pnpm' && '~/.local/share/pnpm/store' || '~/.npm' }}
           key: ${{ runner.os }}-${{ env.NODE_PACKAGE_MANAGER }}-store-${{ hashFiles('**/pnpm-lock.yaml', '**/package-lock.json') }}
 
-      # Deliberately no node_modules or ~/.cache/ms-playwright cache here. Both
-      # were tried (#44) and measured slower: the four cache steps cost ~30-40s
-      # of restore/save to move ~130 MB, while the Chromium download they replace
-      # takes ~5s from Playwright's CDN. The node_modules cache made it worse
-      # still — the key is seeded by setup's full-workspace install, while this
-      # job installs the root only, so the restored tree gets pruned. tammet's
-      # e2e job: 44-56s before, 95-98s after.
+      # No browser is installed here: sites run the runner's preinstalled
+      # Google Chrome (`channel: 'chrome'` in their Playwright config), never
+      # Playwright's bundled Chromium, so there is no ~/.cache/ms-playwright to
+      # cache. Deliberately no node_modules cache either: it was tried (#44) and
+      # measured slower — the key is seeded by setup's full-workspace install,
+      # while this job installs the root only, so the restored tree gets pruned.
+      # tammet's e2e job: 44-56s before, 95-98s after.
       #
       # `e2e:install` installs the root package only — `--workspaces=false` under
       # npm, `--ignore-workspace --no-lockfile` under pnpm — which normally skips
